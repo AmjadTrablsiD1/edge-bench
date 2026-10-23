@@ -239,5 +239,28 @@
         null
       ]
     }
+  },
+  "compare": {
+    "_comment": "Each limit is 'absolute or relative, whichever is larger' (a timing spec's usual '±1 µs or ±5 %'), and never below resolution_floor_samples sample periods (each edge time is ±1 sample). Delays (ms scale) and pulse widths (ns scale) get separate limits: one shared absolute limit would hide every nanosecond pulse change.",
+    "time_abs_s": 1e-06,
+    "time_rel": 0.05,
+    "pulse_abs_s": 1e-08,
+    "pulse_rel": 0.1,
+    "count_abs": 2,
+    "count_rel": 0.1,
+    "duty_abs": 0.05,
+    "duty_min_edges": 3,
+    "resolution_floor_samples": 2,
+    "verdicts": {
+      "same": "Same",
+      "changed": "Changed",
+      "critical": "Critical",
+      "excluded": "Excluded",
+      "missing": "Not in both"
+    },
+    "sheet_compare": "Comparison",
+    "sheet_a": "Baseline (A)",
+    "sheet_b": "New (B)",
+    "filename": "edge_bench_compare.xlsx"
   }
 }

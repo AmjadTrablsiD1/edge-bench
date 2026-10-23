@@ -76,3 +76,25 @@ def test_folder_of_captures_is_expanded(tmp_path):
     empty.mkdir()
     r = client.post("/api/files", json={"paths": [str(empty)]})
     assert r.status_code == 400
+
+
+def test_compare_and_export(tmp_path):
+    ids = []
+    for name in ("power_up_sequence.csv", "power_up_new_fw.csv"):
+        f = client.post("/api/files", json={"paths": [str(FIX / name)]}).json()["added"][0]
+        ids.append(_wait_ready(f["id"])["id"])
+    body = {"a_id": ids[0], "b_id": ids[1], "settings": {"ref_channel": 0}}
+    r = client.post("/api/compare", json=body)
+    assert r.status_code == 200, r.text
+    c = r.json()
+    assert c["summary"]["critical"] == 2 and c["summary"]["changed"] == 3 and c["summary"]["same"] == 3
+    assert {row["index"]: row["verdict"] for row in c["rows"]}[3] == "critical"
+
+    bad = client.post("/api/compare", json={**body, "b_id": ids[0]})
+    assert bad.status_code == 422 and "two different" in bad.json()["detail"]
+    neg = client.post("/api/compare", json={**body, "tolerance": {"time_rel": -1}})
+    assert neg.status_code == 422
+
+    out = tmp_path / "cmp.xlsx"
+    e = client.post("/api/export/compare", json={**body, "unit": "µs", "path": str(out)})
+    assert e.status_code == 200, e.text and out.exists()

@@ -9,11 +9,14 @@
 - [x] 2026-10-23 16 Playwright tests ×2 themes: workflows, axe (no serious/critical), fold probe at 1366×768 and 1440×900, no page scroll, no clipping, reference line pixel-checked at its computed x
 - [x] 2026-10-23 Benchmark: 60 s / 16 ch / 5.86 M edges — CSV path ≈ 80 s, Edge Bench 2.0 s cold, 8 ms warm
 - [x] 2026-10-23 macOS install (.command, .app, App Launcher tile), Windows zips (online 1 MB, offline 76 MB with wheels for CPython 3.12/3.13), Quit button for the window-less Windows run
+- [x] 2026-10-24 Fixed: install.sh's `--exclude dist` also dropped `ui/dist` (installed app showed {"detail":"Not Found"}); a missing UI now says so
+- [x] 2026-10-24 **Compare A ↔ B**: same settings on two captures, per-channel verdict (same / changed / critical) with reasons, A/B overlay view, comparison workbook. Tested on a planted "new firmware" fixture (5 differences, all found), naive cross-checks for the span metrics, 14 new pytest + 6 new Playwright tests
 
 ## Doing
 - [ ] First run on a real Windows work PC (you)
 
 ## Next
+0. **Compare: match channels by name** as an option, for harnesses that were rewired between captures.
 1. **Repeated cycles with statistics.** Every reference edge is a cycle, with min / mean / max / σ per channel and a *Cycles* sheet. This is the most likely follow-up; `find_edge` already supports it.
 2. **Per-channel edge kind** (e.g. D3 rising, D5 falling) instead of one global target edge.
 3. **"Nearest edge" rule** (Δt may be negative) for channels that switch before the reference.

@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import cache, dialogs, excel, logic2, measure, readers, waveform
+from app import cache, compare, dialogs, excel, logic2, measure, readers, waveform
 from app.capture import Capture
 from app.constants import C
 from app.readers import sal
@@ -233,6 +233,60 @@ def get_waveform(file_id: int, t0: float, t1: float, px: int):
         return waveform.decimate(e.capture, t0, t1, px)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+# ----------------------------------------------------------------- compare
+
+class CompareReq(BaseModel):
+    a_id: int
+    b_id: int
+    settings: dict
+    tolerance: dict | None = None
+    span_s: float | None = None
+
+
+def _compare(req: CompareReq) -> compare.Comparison:
+    if req.a_id == req.b_id:
+        raise HTTPException(422, "Pick two different captures to compare.")
+    a, b = _entry(req.a_id), _entry(req.b_id)
+    try:
+        tol = compare.Tolerance.from_dict(req.tolerance)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if req.span_s is not None and req.span_s <= 0:
+        raise HTTPException(422, "The compare span must be more than 0, or empty for all of it.")
+    try:
+        return compare.compare(a.capture, b.capture, _settings(req.settings), tol, req.span_s)
+    except KeyError as exc:
+        raise HTTPException(422, f"{exc.args[0]} (in one of the two captures)") from exc
+    except RuntimeError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@api.post("/api/compare")
+def run_compare(req: CompareReq):
+    t = time.perf_counter()
+    d = _compare(req).as_dict()
+    d["compute_s"] = time.perf_counter() - t
+    return d
+
+
+class CompareExportReq(CompareReq):
+    unit: str = C.units.default_export_unit
+    path: str
+
+
+@api.post("/api/export/compare")
+def export_compare(req: CompareExportReq):
+    cmp = _compare(req)
+    out = Path(req.path).expanduser()
+    if out.suffix.lower() != ".xlsx":
+        out = out.with_suffix(".xlsx")
+    try:
+        excel.write_comparison(cmp, out, unit=req.unit)
+    except PermissionError as exc:
+        raise HTTPException(409, f"Cannot write {out.name} — is it open in Excel? ({exc})") from exc
+    return {"path": str(out), "captures": 2, "skipped": []}
 
 
 # ------------------------------------------------------------------ export

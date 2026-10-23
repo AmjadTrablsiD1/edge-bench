@@ -60,7 +60,7 @@ export function Results(p: { result: Result; selected: number | null; onSelect: 
           </tbody>
         </table>
       </div>
-      <div className="evidence-panel" data-test="evidence">
+      <div className="evidence-panel" data-test="evidence" tabIndex={0} aria-label="How the selected Δt was measured">
         {sel ? <Evidence r={p.result} c={sel} /> : (
           <div className="evidence-empty">
             <div className="eyebrow">Summary</div>

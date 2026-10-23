@@ -21,9 +21,11 @@ async function clearServer(page: Page) {
 }
 
 const errors: string[] = [];
-test.beforeEach(async ({ page }) => {
-  await page.goto("/");
-  await clearServer(page);
+test.beforeEach(async ({ page, request }) => {
+  // Clear through the API *before* any page exists, so no page can be polling
+  // a capture that is being deleted.
+  const { files } = await (await request.get("/api/files")).json();
+  for (const f of files) await request.delete(`/api/files/${f.id}`);
   errors.length = 0;
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
   page.on("console", (m) => { if (m.type() === "error") errors.push(`console: ${m.text()}`); });
@@ -179,4 +181,75 @@ test("bad input says what is wrong", async ({ page }) => {
   await page.locator("[data-test=path-input]").press("Enter");
   await expect(page.locator("[data-test=toast-error]")).toContainText("File not found");
   await expect(page.locator("[data-test=empty]")).toContainText("Could not open");
+});
+
+const NEW_FW = path.join(FIX, "power_up_new_fw.csv");
+
+async function openPair(page: Page) {
+  await page.goto("/");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  for (const p of [POWER, NEW_FW]) {
+    await page.locator("[data-test=path-input]").fill(p);
+    await page.locator("[data-test=path-input]").press("Enter");
+    await expect(page.locator("[data-test=file-item]", { hasText: path.basename(p) })).toContainText("CSV", { timeout: 20_000 });
+  }
+  await page.locator("[data-test=mode] button", { hasText: "Compare" }).click();
+  await expect(page.locator("[data-test=compare-results]")).toBeVisible({ timeout: 20_000 });
+}
+
+test("compare: the planted firmware differences are found", async ({ page }, info) => {
+  await openPair(page);
+  await expect(page.locator("[data-test=compare-summary]")).toHaveText(/2\s*critical\s*3\s*changed\s*3\s*same/);
+  await expect(page.locator("[data-test=pick-a]")).toHaveValue(/\d+/);
+  await expect(page.locator("[data-test=cmp-row-1]")).toContainText("Changed");
+  await expect(page.locator("[data-test=cmp-delta-1]")).toHaveText("+500 µs");
+  await expect(page.locator("[data-test=cmp-row-3]")).toContainText("Critical");
+  await expect(page.locator("[data-test=cmp-row-6]")).toContainText("Critical");
+  await expect(page.locator("[data-test=cmp-row-2]")).toContainText("Same");
+  await page.screenshot({ path: `${SHOTS}/${info.project.name}-04-compare.png` });
+  await axe(page);
+
+  await page.locator("[data-test=cmp-row-3]").click();
+  await expect(page.locator("[data-test=reasons]")).toContainText("Edge disappeared");
+  await expect(page.locator("[data-test=reasons]")).toContainText("Activity stopped");
+  await page.locator("[data-test=cmp-row-7]").click();
+  await expect(page.locator("[data-test=reasons]")).toContainText("Shorter pulses than baseline: shortest 40 ns → 10 ns");
+  await page.screenshot({ path: `${SHOTS}/${info.project.name}-05-compare-detail.png` });
+});
+
+test("compare: swap, tolerance and back to measure", async ({ page }) => {
+  await openPair(page);
+  await page.locator("[data-test=swap]").click();
+  await expect(page.locator("[data-test=cmp-delta-1]")).toHaveText("-500 µs");
+  await page.locator("[data-test=swap]").click();
+  await expect(page.locator("[data-test=cmp-delta-1]")).toHaveText("+500 µs");
+
+  // 500 us shift is inside a ±600 us delay tolerance
+  await page.locator("[data-test=tol-delay]").fill("600");
+  await expect(page.locator("[data-test=cmp-row-1]")).toContainText("Same");
+  await expect(page.locator("[data-test=cmp-row-3]")).toContainText("Critical");   // structure still flagged
+  await page.locator("[data-test=tol-delay]").fill("x");
+  await expect(page.locator("[data-test=compare-settings] .field-error")).toContainText("Not a number");
+  await expect(page.locator("[data-test=export]")).toBeDisabled();
+  await page.locator("[data-test=tol-delay]").fill("1");
+
+  await page.locator("[data-test=mode] button", { hasText: "Measure" }).click();
+  await expect(page.locator("[data-test=results]")).toBeVisible();
+});
+
+test("compare: shell stays an instrument", async ({ page }) => {
+  test.setTimeout(120_000);
+  const { failures } = await foldProbe(page, {
+    url: "/",
+    viewports: LAPTOP_VIEWPORTS,
+    scrollers: [".inspector-scroll", ".file-list", ".table-wrap"],
+    cases: [{ name: "compare", load: async (p: Page) => { await clearServer(p); await openPair(p); },
+      must: ["[data-test=mode]", "[data-test=pick-a]", "[data-test=pick-b]", "[data-test=swap]",
+             "[data-test=export]", "[data-test=compare-results]", "[data-test=compare-summary]"] }],
+  });
+  expect(failures, failures.join("\n")).toEqual([]);
+  expect(await pageScrolls(page)).toEqual({ x: false, y: false });
+  expect(await clippedElements(page, [".app-header > *", ".toolbar > *", ".status-bar > *"])).toEqual([]);
+  await page.screenshot({ path: `${SHOTS}/compare-laptop.png` });
 });

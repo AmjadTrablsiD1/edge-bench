@@ -6,7 +6,7 @@
 // so a capture of any size draws in the same time.
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { chartScale, token, useCanvas } from "../canvas";
+import { chartScale, drawSegments, token, useCanvas } from "../canvas";
 import { C } from "../constants";
 import { measuredText, niceStep, signedTime, timeText } from "../format";
 import type { CaptureSummary, Result, Wave } from "../types";
@@ -120,42 +120,8 @@ export function Waveform(p: Props) {
       ctx.rect(g.gutter, y0, g.plotW, g.laneH);
       ctx.clip();
       ctx.globalAlpha = isExcl ? 0.45 : 1;
-      ctx.strokeStyle = colour;
-      ctx.lineWidth = 1.5 * g.k;
-      ctx.lineJoin = "miter";
-      for (const s of wc?.segments ?? []) {
-        if (s.mode === "exact") {
-          let lv = s.level ?? 0;
-          ctx.beginPath();
-          ctx.moveTo(x(s.begin), lv ? yHi : yLo);
-          for (const t of s.times ?? []) {
-            const xx = x(t);
-            ctx.lineTo(xx, lv ? yHi : yLo);
-            lv ^= 1;
-            ctx.lineTo(xx, lv ? yHi : yLo);
-          }
-          ctx.lineTo(x(s.end), lv ? yHi : yLo);
-          ctx.stroke();
-        } else {
-          const levels = s.levels ?? [], counts = s.counts ?? [];
-          const xa = x(s.begin), xb = x(s.end), bw = (xb - xa) / Math.max(1, levels.length);
-          ctx.fillStyle = isRef ? token("q-ref-2") : token("q-trace-2");
-          ctx.beginPath();
-          let pen = false;
-          for (let b = 0; b < levels.length; b++) {
-            const bx = xa + b * bw;
-            if (counts[b] > 0) {
-              ctx.fillRect(bx, yHi, Math.max(2 * g.k, bw), yLo - yHi);
-              pen = false;
-            } else {
-              const yy = levels[b] ? yHi : yLo;
-              if (!pen) { ctx.moveTo(bx, yy); pen = true; } else ctx.lineTo(bx, yy);
-              ctx.lineTo(bx + bw, yy);
-            }
-          }
-          ctx.stroke();
-        }
-      }
+      drawSegments(ctx, wc?.segments ?? [], x, yHi, yLo, colour,
+        isRef ? token("q-ref-2") : token("q-trace-2"), g.k);
       ctx.restore();
 
       // measured edge, Δt bracket

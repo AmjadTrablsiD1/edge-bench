@@ -56,16 +56,11 @@ def _num(v: float | None, scale: float, resolution: float | None = None) -> floa
     return round(v / scale, digits)
 
 
-def write(results: list[Result], out: Path, unit: str = C.units.default_export_unit) -> Path:
-    if not results:
-        raise ValueError("nothing to export: no measured captures")
+def _results_sheet(ws, title: str, results: list[Result], unit: str) -> None:
+    """One row per channel per capture; reference highlighted, misses marked."""
     sc = unit_scale(unit)
     labels = dict(C.measure.statuses)
-    wb = Workbook()
-
-    # ---- Results ---------------------------------------------------------
-    ws = wb.active
-    ws.title = X.sheet_results
+    ws.title = title
     cols = ["Capture", "Channel", "Name", "Status", "Edge", f"Δt [{unit}]",
             "Edge time in capture [s]", f"Bounce before settling [{unit}]",
             f"Next edge (outside window) [{unit}]", "Level at reference", "Edges in capture"]
@@ -89,6 +84,15 @@ def write(results: list[Result], out: Path, unit: str = C.units.default_export_u
                 ws.cell(row=row, column=c).number_format = "0.0########"
             ws.cell(row=row, column=7).number_format = "0.000000000"
     ws.auto_filter.ref = ws.dimensions
+
+
+def write(results: list[Result], out: Path, unit: str = C.units.default_export_unit) -> Path:
+    if not results:
+        raise ValueError("nothing to export: no measured captures")
+    sc = unit_scale(unit)
+    wb = Workbook()
+
+    _results_sheet(wb.active, X.sheet_results, results, unit)
 
     # ---- Batch matrix ------------------------------------------------------
     if len(results) > 1:
@@ -144,6 +148,96 @@ def write(results: list[Result], out: Path, unit: str = C.units.default_export_u
                    + (f" · ±{res.resolution_s / sc:.6g}" if res.resolution_s else " · resolution unknown")])
         for n in res.notes:
             st.append(["", n])
+
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(out)
+    return out
+
+
+# ------------------------------------------------------------- comparison
+
+_CHANGED_FILL = PatternFill("solid", fgColor=X.ref_fill)
+
+
+def write_comparison(cmp, out: Path, unit: str = C.units.default_export_unit) -> Path:
+    """Comparison sheet (verdict per channel, A, B, difference, why), then each
+    capture's own results, then everything needed to reproduce it."""
+    from app.units import fmt_pct, fmt_time
+
+    sc = unit_scale(unit)
+    res = cmp.resolution_s
+    verdicts = dict(C.compare.verdicts)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = C.compare.sheet_compare
+    cols = ["Channel", "Name (A)", "Name (B)", "Verdict",
+            f"Δt A [{unit}]", f"Δt B [{unit}]", f"B − A [{unit}]", "Edge A", "Edge B",
+            "Level@ref A", "Level@ref B", f"First pulse A [{unit}]", f"First pulse B [{unit}]",
+            "Edges A", "Edges B", "Time high A", "Time high B",
+            f"Shortest pulse A [{unit}]", f"Shortest pulse B [{unit}]", "Why"]
+    widths = [9, 20, 20, 11] + [X.col_width] * 3 + [9, 9, 11, 11] + [X.col_width] * 2 + [9, 9, 11, 11] \
+        + [X.col_width] * 2 + [80]
+    _header(ws, cols, widths)
+    for r in cmp.rows:
+        a, b = r.a, r.b
+        g = lambda m, k: getattr(m, k) if m is not None else None  # noqa: E731
+        ws.append([
+            r.index, r.name_a, r.name_b, verdicts.get(r.verdict, r.verdict),
+            _num(g(a, "dt"), sc, res), _num(g(b, "dt"), sc, res), _num(r.dt_delta, sc, res),
+            g(a, "edge"), g(b, "edge"), g(a, "level_at_ref"), g(b, "level_at_ref"),
+            _num(g(a, "first_pulse"), sc, res), _num(g(b, "first_pulse"), sc, res),
+            g(a, "edges"), g(b, "edges"),
+            None if g(a, "duty") is None else round(a.duty, 4),
+            None if g(b, "duty") is None else round(b.duty, 4),
+            _num(g(a, "min_pulse"), sc, res), _num(g(b, "min_pulse"), sc, res),
+            "; ".join(x.text for x in r.reasons) or None,
+        ])
+        row = ws.max_row
+        fill = {"critical": _MISS_FILL, "changed": _CHANGED_FILL}.get(r.verdict)
+        if fill:
+            for c in range(1, 5):
+                ws.cell(row=row, column=c).fill = fill
+        for c in (5, 6, 7, 12, 13, 18, 19):
+            ws.cell(row=row, column=c).number_format = "0.0########"
+        for c in (16, 17):
+            ws.cell(row=row, column=c).number_format = "0.0%"
+        ws.cell(row=row, column=len(cols)).alignment = Alignment(wrap_text=True, vertical="top")
+    ws.auto_filter.ref = ws.dimensions
+
+    _results_sheet(wb.create_sheet(), C.compare.sheet_a, [cmp.result_a], unit)
+    _results_sheet(wb.create_sheet(), C.compare.sheet_b, [cmp.result_b], unit)
+
+    st = wb.create_sheet(X.sheet_settings)
+    _header(st, ["Setting", "Value"], [34, 80])
+    t, s = cmp.tolerance, cmp.settings
+
+    def ref_text(ref):
+        return (f"{ref['name']} {ref['edge']} #{ref['occurrence']} at {ref['time']:.9f} s in capture"
+                if ref else "no reference edge")
+
+    rows = [
+        ("Exported by", f"{C.app.name} {C.app.version}"),
+        ("Exported at", _dt.datetime.now().isoformat(timespec="seconds")),
+        ("Baseline (A)", cmp.file_a), ("New (B)", cmp.file_b),
+        ("Reference in A", ref_text(cmp.reference_a)), ("Reference in B", ref_text(cmp.reference_b)),
+        ("Reference rule", f"{'first channel to change' if s.ref_mode == 'auto' else f'channel {s.ref_channel}'}, "
+                           f"{s.ref_edge} edge #{s.occurrence}"),
+        ("Target edge", s.target_edge),
+        ("Glitch filter", fmt_time(s.glitch_s) if s.glitch_s else "off"),
+        ("Span compared after each reference", fmt_time(cmp.span_s, res) if cmp.span_s else "—"),
+        ("Resolution used", f"±{fmt_time(res)}" if res else "unknown"),
+        ("Delay tolerance", f"±{fmt_time(t.time_abs_s)} or ±{fmt_pct(t.time_rel)}, whichever is larger"),
+        ("Pulse-width tolerance", f"±{fmt_time(t.pulse_abs_s)} or ±{fmt_pct(t.pulse_rel)}, whichever is larger"),
+        ("Edge-count tolerance", f"±{t.count_abs} edges or ±{fmt_pct(t.count_rel)}, whichever is larger"),
+        ("Time-high tolerance", f"±{fmt_pct(t.duty_abs)} of the span"),
+        ("Never flagged", f"differences up to {C.compare.resolution_floor_samples} sample periods"),
+        ("Matching", "channels matched by number (D0 with D0)"),
+    ]
+    for r in rows:
+        st.append(list(r))
+    for n in cmp.notes:
+        st.append(["Note", n])
 
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)

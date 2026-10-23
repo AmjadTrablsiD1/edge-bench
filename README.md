@@ -50,6 +50,29 @@ Logic 2 binary export folder (`digital_N.bin`, format v0 and v1), or a Logic 2
 digital CSV. Tested with the Logic 8, Logic Pro 8 and Logic Pro 16 (using Logic 2's
 simulated devices).
 
+## Compare two captures (A ↔ B)
+
+Use this, for example, to check a new firmware against the released one before
+it goes near hardware. Switch the header to **Compare A ↔ B**, then pick the
+**baseline (A)** and the **new capture (B)**. Both get the same measurement,
+and each is aligned on its own reference edge. Every channel is then marked:
+
+| Verdict | When |
+|---|---|
+| **Critical** | an edge appeared or vanished; its direction flipped; the level when the reference fired differs; the channel started or stopped toggling |
+| **Changed** | Δt, the first pulse width, the edge count, the time spent high (toggling channels only) or the shortest pulse moved beyond tolerance |
+| **Same** | nothing beyond tolerance |
+
+Tolerances are "absolute or relative, whichever is larger", set separately
+for delays (default ±1 µs / ±5 %) and pulse widths (±10 ns / ±10 %).
+Differences of up to 2 sample periods are never flagged, because each edge
+time is only good to ±1 sample. The view shows A (teal) above B (purple) in
+every lane, with any shift shaded. The table lists the riskiest channels first
+with the reason, and **Export Excel** writes a *Comparison* sheet plus both
+captures' results and every setting used.
+
+![Compare mode](docs/screenshot-compare.png)
+
 ## Install
 
 **Windows (work PCs).** On the Mac, run `scripts/make_windows_package.sh`. It
@@ -75,8 +98,8 @@ along with the Logic 2 it started.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 cd ui && npm install && npm run build && cd ..
-.venv/bin/python -m pytest -q          # core + API + Logic 2 end-to-end (52)
-npm install && npx playwright test     # real UI, both themes, axe, fold probe (16)
+.venv/bin/python -m pytest -q          # core + API + compare + Logic 2 end-to-end (66)
+npm install && npx playwright test     # real UI, both themes, axe, fold probe (22)
 .venv/bin/python main.py               # run from the repo
 ```
 
@@ -98,6 +121,9 @@ column / repeated cycles": [ARCHITECTURE.md](ARCHITECTURE.md). Plan:
   instance may not start. On macOS two instances run side by side (tested).
   The fallback is Preferences → Automation → enable the server on port 10430;
   Edge Bench then uses that window.
+- **Compare matches channels by number** (D3 with D3), not by name. It
+  compares one reference event and summary numbers over the span (count, time
+  high, shortest pulse), not every edge of a burst one by one.
 - **One reference event per capture.** Repeated cycles with statistics, the
   "nearest edge" rule (negative Δt) and a per-channel edge kind are not built
   yet; see TODO.md.

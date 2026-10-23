@@ -1,5 +1,5 @@
 {
-  "_comment": "RULE 1: dark AND light, tinted neutrals, never plain grey. Colours appear nowhere else -- the UI turns these into CSS variables. Instrument palette (E_GUI): nine neutrals swap per theme; the accents keep their hue family in both (darkened in daylight so they clear contrast). q-* are the waveform quantities: trace = an ordinary channel, ref = the reference channel and its marker, edge = a measured edge and its delta, miss = no edge / out of window.",
+  "_comment": "RULE 1: dark AND light, tinted neutrals, never plain grey. Colours appear nowhere else -- the UI turns these into CSS variables. Instrument palette (E_GUI): nine neutrals swap per theme; the accents keep their hue family in both (darkened in daylight so they clear contrast). q-* are the waveform quantities: trace = an ordinary channel, ref = the reference channel and its marker, edge = a measured edge and its delta, miss = no edge / out of window; new = capture B in a comparison (A keeps trace).",
   "midnight": {
     "label": "Midnight", "scheme": "dark",
     "bg": "#080E17", "surface": "#0E1621", "surface2": "#111D2A", "raised": "#162231",
@@ -13,7 +13,8 @@
     "q-trace": "#5FD4C4", "q-trace-2": "#2C7F78", "q-trace-3": "#1C5A55",
     "q-ref": "#E9BC6A", "q-ref-2": "#8E713A", "q-ref-3": "#5E4A26",
     "q-edge": "#62B4FF", "q-edge-2": "#3A78B0", "q-edge-3": "#24507A",
-    "q-miss": "#FF886B", "q-miss-2": "#A9563F", "q-miss-3": "#6E382A"
+    "q-miss": "#FF886B", "q-miss-2": "#A9563F", "q-miss-3": "#6E382A",
+    "q-new": "#C39BF5", "q-new-2": "#7E5BB0", "q-new-3": "#4E3870"
   },
   "daylight": {
     "label": "Daylight", "scheme": "light",
@@ -28,6 +29,7 @@
     "q-trace": "#0D7268", "q-trace-2": "#5FB3AA", "q-trace-3": "#A5D8D2",
     "q-ref": "#7A5400", "q-ref-2": "#C79A3C", "q-ref-3": "#E6CB8E",
     "q-edge": "#1A5FA8", "q-edge-2": "#6FA6E0", "q-edge-3": "#B3D1F0",
-    "q-miss": "#A33820", "q-miss-2": "#DB8A76", "q-miss-3": "#F0C2B6"
+    "q-miss": "#A33820", "q-miss-2": "#DB8A76", "q-miss-3": "#F0C2B6",
+    "q-new": "#6B3FBF", "q-new-2": "#9C7BDA", "q-new-3": "#CDB9F0"
   }
 }

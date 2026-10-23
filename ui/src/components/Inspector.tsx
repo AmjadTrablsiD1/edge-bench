@@ -3,13 +3,16 @@
 import { useState } from "react";
 import { C } from "../constants";
 import { bytes, timeText } from "../format";
-import type { FormErrors, Form } from "../settings";
-import type { AppStatus, CaptureSummary, EdgeKind, Result } from "../types";
+import type { FormErrors, Form, ToleranceErrors } from "../settings";
+import type { AppStatus, CaptureSummary, Comparison, EdgeKind, Result } from "../types";
 import { Field, Icon, Segmented, TimeInput } from "./ui";
 
 type Tab = "setup" | "coverage" | "app";
 
 interface Props {
+  mode: "measure" | "compare";
+  cmp: Comparison | null;
+  tolErrors: ToleranceErrors;
   form: Form;
   setForm: (f: Form) => void;
   errors: FormErrors;
@@ -116,6 +119,41 @@ export function Inspector(p: Props) {
               </Field>
             </section>
 
+            {p.mode === "compare" && (
+              <section className="well" data-test="compare-settings">
+                <h3 className="well-cap">Compare tolerances</h3>
+                <p className="field-hint tight">A difference is flagged when it exceeds the absolute <b>or</b> the relative limit, whichever is larger — never below 2 samples.</p>
+                <div className="field-row">
+                  <Field label="Delay ±" htmlFor="td" error={p.tolErrors.tolDelay} hint="Δt after the reference">
+                    <TimeInput id="td" value={f.tolDelay} onChange={(q) => set({ tolDelay: q })} testId="tol-delay" />
+                  </Field>
+                  <Field label="or ± %" htmlFor="tdp" error={p.tolErrors.tolDelayPct}>
+                    <input id="tdp" type="text" inputMode="decimal" value={f.tolDelayPct} onChange={(e) => set({ tolDelayPct: e.target.value })} />
+                  </Field>
+                </div>
+                <div className="field-row">
+                  <Field label="Pulse width ±" htmlFor="tp" error={p.tolErrors.tolPulse} hint="first and shortest pulse">
+                    <TimeInput id="tp" value={f.tolPulse} onChange={(q) => set({ tolPulse: q })} testId="tol-pulse" />
+                  </Field>
+                  <Field label="or ± %" htmlFor="tpp" error={p.tolErrors.tolPulsePct}>
+                    <input id="tpp" type="text" inputMode="decimal" value={f.tolPulsePct} onChange={(e) => set({ tolPulsePct: e.target.value })} />
+                  </Field>
+                </div>
+                <div className="field-row">
+                  <Field label="Edge count ± %" htmlFor="tc" error={p.tolErrors.tolCountPct} hint={`and at least ±${C.compare.count_abs} edges`}>
+                    <input id="tc" type="text" inputMode="decimal" value={f.tolCountPct} onChange={(e) => set({ tolCountPct: e.target.value })} />
+                  </Field>
+                  <Field label="Time high ± %" htmlFor="tdu" error={p.tolErrors.tolDutyPct} hint="points of the span">
+                    <input id="tdu" type="text" inputMode="decimal" value={f.tolDutyPct} onChange={(e) => set({ tolDutyPct: e.target.value })} />
+                  </Field>
+                </div>
+                <Field label="Span compared after the reference" htmlFor="span" error={p.tolErrors.span}
+                  hint={p.cmp?.span_s ? `in use: ${timeText(p.cmp.span_s)} (empty = as far as both captures go)` : "empty = as far as both captures go"}>
+                  <TimeInput id="span" value={f.span} onChange={(q) => set({ span: q })} placeholder="all" testId="span" />
+                </Field>
+              </section>
+            )}
+
             <section className="well">
               <h3 className="well-cap">Excel</h3>
               <Field label="Time unit in the workbook">
@@ -127,7 +165,7 @@ export function Inspector(p: Props) {
           </>
         )}
 
-        {tab === "coverage" && <Coverage result={p.result} capture={p.capture} form={f} />}
+        {tab === "coverage" && (p.mode === "compare" ? <CompareCoverage cmp={p.cmp} /> : <Coverage result={p.result} capture={p.capture} form={f} />)}
 
         {tab === "app" && (
           <>
@@ -202,6 +240,38 @@ function Coverage(p: { result: Result | null; capture: CaptureSummary | null; fo
         <section className="well">
           <h3 className="well-cap">Notes on this capture</h3>
           <ul className="cover-list">{r!.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+        </section>
+      )}
+    </>
+  );
+}
+
+function CompareCoverage({ cmp }: { cmp: Comparison | null }) {
+  return (
+    <>
+      <section className="well">
+        <h3 className="well-cap">Compared, per channel</h3>
+        <ul className="cover-list ok">
+          <li>The same measurement on both captures; each aligned on its own reference edge{cmp?.reference_a ? ` (${cmp.reference_a.name} ${cmp.reference_a.edge})` : ""}.</li>
+          <li><b>Critical</b> if an edge appears or vanishes, flips direction, the level at the reference differs, or the channel starts or stops toggling.</li>
+          <li><b>Changed</b> if Δt, the first pulse width, the edge count, the time spent high, or the shortest pulse moves beyond tolerance.</li>
+          <li>Span: {cmp?.span_s ? `${timeText(cmp.span_s)} after the reference, as far as both captures go` : "after the reference, as far as both captures go"}.</li>
+          <li>Never flagged: differences up to {C.compare.resolution_floor_samples} sample periods{cmp?.resolution_s ? ` (${timeText(cmp.resolution_s * C.compare.resolution_floor_samples)})` : ""}, because each edge is ±1 sample.</li>
+        </ul>
+      </section>
+      <section className="well">
+        <h3 className="well-cap">Not compared</h3>
+        <ul className="cover-list no">
+          <li>Events before the reference, and anything after the span.</li>
+          <li>The order of every edge in a burst: bursts are compared by count, time high and shortest pulse, not edge by edge.</li>
+          <li>Protocol content (bytes on SPI/I²C/UART) and analog levels.</li>
+          <li>Channels are matched by number (D3 with D3), not by name.</li>
+        </ul>
+      </section>
+      {(cmp?.notes.length ?? 0) > 0 && (
+        <section className="well">
+          <h3 className="well-cap">Notes on this pair</h3>
+          <ul className="cover-list">{cmp!.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
         </section>
       )}
     </>

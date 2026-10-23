@@ -41,7 +41,9 @@ Inside `app/`:
 | `edges.py` | `find_edge()` — binary search to t, parity for direction, optional glitch filter (state machine over the few edges near t) |
 | `measure.py` | Reference resolution (manual / auto-first-change) and per-channel Δt. Returns plain dataclasses |
 | `waveform.py` | Decimation for the viewport: exact edges when few, per-pixel "busy" buckets when many |
-| `excel.py` | Workbook writer (Results, Batch matrix, Settings) |
+| `compare.py` | Baseline (A) against new (B): same settings, each aligned on its own reference; per-channel metrics over a common span; verdicts same / changed / critical with reasons |
+| `units.py` | Time as text for sentences the core writes (reasons, Excel notes), same digits rule as the UI |
+| `excel.py` | Workbook writers: results (Results, Batch matrix, Settings) and comparison (Comparison, Baseline, New, Settings) |
 | `logic2.py` | Find / connect to / launch Logic 2, export binary, verify the files are complete |
 | `cache.py` | Exported binaries keyed by (path, size, mtime); LRU size cap |
 | `dialogs.py` | Native file dialog in a child process (tkinter), because a browser cannot hand over a path |
@@ -80,6 +82,11 @@ Inside `app/`:
 2. Add the column to `constants.json → excel.results_columns` and `ui.result_columns`.
 3. Test it in `tests/test_measure.py` with two independent examples.
 
+**A new comparison check** (e.g. "frequency of a clock"):
+1. Add the field to `compare.Metrics` and compute it in `compare.metrics_for()` (vectorised over the span, like `span_activity`).
+2. Add the rule to `compare._compare_row()`: a `Reason` with severity and a sentence; its tolerance goes in `Tolerance` and `constants.json → compare`.
+3. Add the A/B columns in `excel.write_comparison` and a line in `CompareResults.tsx → Detail`. Test it in `tests/test_compare.py` against a naive computation.
+
 **Repeated cycles** (the planned next mode):
 1. `measure.run_cycles()` loops `find_edge()` over every reference edge.
    `Capture` already supports it, so nothing below that changes.
@@ -102,6 +109,9 @@ Inside `app/`:
 | Windows zip with prebuilt UI + wheels | Work PCs have no Node.js and may sit behind a proxy | Building on the PC |
 
 ## Known sharp edges
+
+- Compare: "time high" is only compared on channels with >= `duty_min_edges` edges. On a single transition it restates Δt, and before this rule a shifted edge was flagged twice, so raising the delay tolerance could never clear it.
+- UI requests use "newest request wins" (an id counter), not AbortController. An abort landing while a finished response was still being read once lost a comparison result.
 
 - numpy 2.5 has no Python 3.11 wheels: the Windows launcher accepts Python 3.12+ only.
 - `logic2-automation` depends on pywin32 on Windows; `make_windows_package.sh` adds that wheel by hand, because `pip download --platform` does not evaluate the marker for the target platform.

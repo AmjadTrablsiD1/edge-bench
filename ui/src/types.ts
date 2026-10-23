@@ -77,3 +77,36 @@ export interface AppStatus {
             configured: string | null; user_port_open: boolean };
   platform: string; cache_bytes: number; cache_dir: string; cache_max_gb: number;
 }
+
+export type Verdict = "same" | "changed" | "critical" | "excluded" | "missing";
+
+export interface Metrics {
+  status: ChannelResult["status"];
+  dt: number | null; edge: "rising" | "falling" | null; level_at_ref: number | null;
+  first_pulse: number | null; edges: number | null; duty: number | null; min_pulse: number | null;
+}
+
+export interface CompareRow {
+  index: number; name_a: string | null; name_b: string | null; verdict: Verdict;
+  a: Metrics | null; b: Metrics | null;
+  reasons: { metric: string; severity: "changed" | "critical"; text: string }[];
+  dt_delta: number | null;
+}
+
+export interface Tolerance {
+  time_abs_s: number; time_rel: number; pulse_abs_s: number; pulse_rel: number;
+  count_abs: number; count_rel: number; duty_abs: number;
+}
+
+export interface Comparison {
+  file_a: string; file_b: string;
+  reference_a: Reference | null; reference_b: Reference | null;
+  span_s: number | null; resolution_s: number | null;
+  tolerance: Tolerance; settings: Settings;
+  rows: CompareRow[];
+  summary: Record<Verdict, number>;
+  notes: string[];
+  verdict_labels: Record<Verdict, string>;
+  status_labels: Record<string, string>;
+  compute_s: number;
+}
