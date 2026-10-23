@@ -347,6 +347,14 @@ def clear_cache():
 
 # ------------------------------------------------------------------ static
 
+if not (UI_DIST / "index.html").is_file():
+    # Say what is wrong instead of a bare {"detail": "Not Found"}.
+    @api.get("/{rest:path}")
+    def no_ui(rest: str):
+        return JSONResponse(status_code=503, content={
+            "detail": f"The user interface is missing ({UI_DIST}). Rebuild it: cd ui && npm run build, "
+                      "then run install.sh again (or use the Windows release zip)."})
+
 if UI_DIST.is_dir():
     api.mount("/assets", StaticFiles(directory=UI_DIST / "assets"), name="assets")
 

@@ -23,7 +23,7 @@ echo "==> Building the UI"
 
 echo "==> Copying the app to $DEST"
 rsync -a --delete \
-  --exclude '.git' --exclude '.venv' --exclude 'node_modules' --exclude 'dist' \
+  --exclude '.git' --exclude '.venv' --exclude 'node_modules' --exclude '/dist' \
   --exclude 'ui/node_modules' --exclude '__pycache__' --exclude '.pytest_cache' \
   --exclude 'tests' --exclude 'test-results' --exclude 'playwright-report' \
   --exclude 'ui/src' --exclude 'ui/public' \
