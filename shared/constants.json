@@ -1,0 +1,243 @@
+{
+  "_comment": "RULE 11: the single source of truth. No literal number, path, port, timeout, limit or label may appear anywhere else in the codebase. Python reads this via app/constants.py, the UI imports it via ui/src/constants.ts.",
+  "app": {
+    "id": "edge-bench",
+    "name": "Edge Bench",
+    "version": "0.1.0",
+    "icon": "⏱",
+    "tagline": "Saleae edge timing — reference edge to every channel, out to Excel"
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 0,
+    "whoami_token": "edge-bench-1",
+    "startup_timeout_s": 20,
+    "probe_interval_s": 0.25,
+    "browser_delay_s": 0.2,
+    "dev_port": 8791
+  },
+  "paths": {
+    "config_dir": "~/.config/edge-bench",
+    "state_dir": "~/.local/state/edge-bench",
+    "log_dir": "~/.local/state/edge-bench/logs",
+    "cache_dir": "~/.cache/edge-bench"
+  },
+  "files": {
+    "extensions": [
+      ".sal",
+      ".csv",
+      ".bin"
+    ],
+    "dialog_title": "Add Saleae captures",
+    "dialog_filetypes": [
+      [
+        "Saleae captures",
+        "*.sal"
+      ],
+      [
+        "Logic 2 digital CSV",
+        "*.csv"
+      ],
+      [
+        "Logic 2 binary export",
+        "*.bin"
+      ],
+      [
+        "All files",
+        "*.*"
+      ]
+    ],
+    "dialog_timeout_s": 600,
+    "bin_glob": "digital_*.bin",
+    "bin_index_regex": "digital[_-](\\d+)\\.bin$",
+    "csv_time_header": "Time [s]",
+    "csv_no_data": "X"
+  },
+  "binary": {
+    "magic": "<SALEAE>",
+    "type_digital": 0,
+    "supported_versions": [
+      0,
+      1
+    ]
+  },
+  "logic2": {
+    "user_port": 10430,
+    "own_port_first": 10440,
+    "own_port_tries": 20,
+    "connect_timeout_s": 60,
+    "export_complete_timeout_s": 600,
+    "export_poll_s": 0.2,
+    "export_stable_polls": 3,
+    "cli_args": [
+      "--automation",
+      "--automationPort"
+    ],
+    "candidates": {
+      "Windows": [
+        "%ProgramW6432%\\Logic\\Logic.exe",
+        "%ProgramFiles%\\Logic\\Logic.exe",
+        "%LOCALAPPDATA%\\Programs\\Logic\\Logic.exe"
+      ],
+      "Darwin": [
+        "/Applications/Logic2.app/Contents/MacOS/Logic",
+        "/Applications/Saleae Logic.app/Contents/MacOS/Logic",
+        "~/Applications/Logic2.app/Contents/MacOS/Logic"
+      ],
+      "Linux": [
+        "~/Logic.AppImage",
+        "/opt/saleae/Logic"
+      ]
+    },
+    "probe_channels": [
+      16,
+      8,
+      4
+    ]
+  },
+  "cache": {
+    "max_gb": 20,
+    "key_version": 1
+  },
+  "measure": {
+    "edge_kinds": [
+      "rising",
+      "falling",
+      "any"
+    ],
+    "ref_modes": [
+      "manual",
+      "auto"
+    ],
+    "default_ref_mode": "manual",
+    "default_ref_edge": "rising",
+    "default_target_edge": "any",
+    "default_occurrence": 1,
+    "max_occurrence": 1000000,
+    "glitch_walk_limit": 100000,
+    "statuses": {
+      "ok": "Edge found",
+      "no_edge": "No edge after reference",
+      "out_of_window": "No edge inside window",
+      "reference": "Reference",
+      "excluded": "Excluded",
+      "no_data": "No data at reference"
+    }
+  },
+  "waveform": {
+    "max_exact_per_px": 2,
+    "min_px": 50,
+    "max_px": 8000,
+    "default_span_factor": 1.25,
+    "lane_px": 34,
+    "lane_gap_px": 8,
+    "label_gutter_px": 132,
+    "axis_px": 26,
+    "high_frac": 0.18,
+    "low_frac": 0.82,
+    "zoom_step": 1.25,
+    "min_span_s": 1e-09
+  },
+  "units": {
+    "time": [
+      {
+        "label": "s",
+        "scale": 1
+      },
+      {
+        "label": "ms",
+        "scale": 0.001
+      },
+      {
+        "label": "µs",
+        "scale": 1e-06
+      },
+      {
+        "label": "ns",
+        "scale": 1e-09
+      }
+    ],
+    "default_export_unit": "µs"
+  },
+  "excel": {
+    "filename_suffix": "_edges.xlsx",
+    "batch_filename": "edge_bench_batch.xlsx",
+    "sheet_results": "Results",
+    "sheet_matrix": "Batch matrix",
+    "sheet_settings": "Settings",
+    "header_fill": "1F3A5F",
+    "header_font": "FFFFFF",
+    "ref_fill": "FFF2CC",
+    "miss_fill": "FDE2E1",
+    "col_width": 16,
+    "name_col_width": 26
+  },
+  "ui": {
+    "default_theme": "midnight",
+    "min_window_width": 900,
+    "motion_ms": 150,
+    "toast_ms": 4500,
+    "poll_ms": 400,
+    "rail_px": 248,
+    "inspector_px": 330,
+    "results_px": 236,
+    "storage_prefix": "edge-bench"
+  },
+  "quantities": {
+    "_comment": "Hue lives in themes.json as --q-<name>. Reference trace, measured edge marker, delta annotation and ordinary trace each keep one hue across the app.",
+    "trace": {
+      "unit": "",
+      "word": "teal",
+      "dash": [
+        null,
+        [
+          8,
+          3
+        ],
+        [
+          2,
+          3
+        ]
+      ]
+    },
+    "ref": {
+      "unit": "",
+      "word": "gold",
+      "dash": [
+        null,
+        [
+          6,
+          3
+        ],
+        [
+          2,
+          3
+        ]
+      ]
+    },
+    "edge": {
+      "unit": "s",
+      "word": "blue",
+      "dash": [
+        null,
+        [
+          4,
+          3
+        ],
+        [
+          2,
+          3
+        ]
+      ]
+    },
+    "busy": {
+      "unit": "",
+      "word": "teal",
+      "dash": [
+        null,
+        null,
+        null
+      ]
+    }
+  }
+}

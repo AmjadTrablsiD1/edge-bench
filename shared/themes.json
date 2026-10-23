@@ -1,0 +1,33 @@
+{
+  "_comment": "RULE 1: dark AND light, tinted neutrals, never plain grey. Colours appear nowhere else -- the UI turns these into CSS variables. Instrument palette (E_GUI): nine neutrals swap per theme; the accents keep their hue family in both (darkened in daylight so they clear contrast). q-* are the waveform quantities: trace = an ordinary channel, ref = the reference channel and its marker, edge = a measured edge and its delta, miss = no edge / out of window.",
+  "midnight": {
+    "label": "Midnight", "scheme": "dark",
+    "bg": "#080E17", "surface": "#0E1621", "surface2": "#111D2A", "raised": "#162231",
+    "line": "#21303E", "lineSoft": "#192633",
+    "text": "#E0E9F1", "secondary": "#A3B3C2", "muted": "#7D93A8",
+    "accent": "#62B4FF", "accentText": "#06121F", "focus": "#62B4FF",
+    "positive": "#6BDBB2", "gold": "#E9BC6A", "coral": "#FF886B",
+    "active": "#132F4D", "activeLine": "#286D9F",
+    "headerA": "#111B27", "headerB": "#0B131E",
+    "plotBg": "#091019", "plotGrid": "#17232F", "plotLane": "#0C141E",
+    "q-trace": "#5FD4C4", "q-trace-2": "#2C7F78", "q-trace-3": "#1C5A55",
+    "q-ref": "#E9BC6A", "q-ref-2": "#8E713A", "q-ref-3": "#5E4A26",
+    "q-edge": "#62B4FF", "q-edge-2": "#3A78B0", "q-edge-3": "#24507A",
+    "q-miss": "#FF886B", "q-miss-2": "#A9563F", "q-miss-3": "#6E382A"
+  },
+  "daylight": {
+    "label": "Daylight", "scheme": "light",
+    "bg": "#E7EBEE", "surface": "#F7F8F9", "surface2": "#EDF1F4", "raised": "#E2EAF0",
+    "line": "#C9D3DB", "lineSoft": "#DCE3E8",
+    "text": "#1F3140", "secondary": "#465D70", "muted": "#4F6475",
+    "accent": "#1A5FA8", "accentText": "#FFFFFF", "focus": "#1A5FA8",
+    "positive": "#0B6B4F", "gold": "#7A5400", "coral": "#A33820",
+    "active": "#D6E6F5", "activeLine": "#3F86C4",
+    "headerA": "#FBFCFD", "headerB": "#EEF2F5",
+    "plotBg": "#FBFCFD", "plotGrid": "#E2E8ED", "plotLane": "#F2F5F8",
+    "q-trace": "#0D7268", "q-trace-2": "#5FB3AA", "q-trace-3": "#A5D8D2",
+    "q-ref": "#7A5400", "q-ref-2": "#C79A3C", "q-ref-3": "#E6CB8E",
+    "q-edge": "#1A5FA8", "q-edge-2": "#6FA6E0", "q-edge-3": "#B3D1F0",
+    "q-miss": "#A33820", "q-miss-2": "#DB8A76", "q-miss-3": "#F0C2B6"
+  }
+}

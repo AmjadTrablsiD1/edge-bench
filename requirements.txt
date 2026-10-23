@@ -1,0 +1,8 @@
+# Runtime only -- what the installed app needs.  Pinned; tested on macOS with Python 3.13.
+fastapi==0.162.0
+uvicorn==0.54.0
+pydantic==2.14.1
+numpy==2.5.4
+pandas==3.1.0
+openpyxl==3.1.5
+logic2-automation==1.0.11

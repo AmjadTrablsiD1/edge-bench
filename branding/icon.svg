@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16263A"/>
+      <stop offset="1" stop-color="#080E17"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="212" fill="url(#g)"/>
+  <rect x="32" y="32" width="960" height="960" rx="212" fill="none" stroke="#21303E" stroke-width="8"/>
+  <!-- reference trace: rises at x=330 -->
+  <path d="M150 430 H330 V250 H874" fill="none" stroke="#E9BC6A" stroke-width="58" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- measured trace: rises later at x=640 -->
+  <path d="M150 800 H640 V620 H874" fill="none" stroke="#5FD4C4" stroke-width="58" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- delta bracket between the two edges -->
+  <path d="M330 520 H640" fill="none" stroke="#62B4FF" stroke-width="40" stroke-linecap="round"/>
+  <path d="M330 470 V570 M640 470 V570" fill="none" stroke="#62B4FF" stroke-width="40" stroke-linecap="round"/>
+</svg>

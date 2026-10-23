@@ -1,0 +1,14 @@
+{
+  "name": "edge-bench-tests",
+  "private": true,
+  "description": "Repo-level test tooling. The app's own dependencies live in ui/package.json.",
+  "type": "module",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.62.1"
+  }
+}
