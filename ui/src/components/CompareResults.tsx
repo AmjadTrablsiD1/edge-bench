@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { measuredText, num } from "../format";
 import type { CompareRow, Comparison, Metrics, Verdict } from "../types";
+import { rowId } from "./CompareWave";
 import { Pill } from "./ui";
 
 const TONE: Record<Verdict, "ok" | "ref" | "miss" | "muted" | "busy"> = {
@@ -10,17 +11,24 @@ const TONE: Record<Verdict, "ok" | "ref" | "miss" | "muted" | "busy"> = {
 };
 const ORDER: Record<Verdict, number> = { critical: 0, changed: 1, missing: 2, same: 3, excluded: 4 };
 
+/** "D1", or "D1 ↔ D3" when name matching paired different channel numbers. */
+function chLabel(r: CompareRow): string {
+  if (r.name_a === null) return `— ↔ D${r.index_b ?? r.index}`;
+  if (r.index_b === null) return `D${r.index} ↔ —`;
+  return r.index_b === r.index ? `D${r.index}` : `D${r.index} ↔ D${r.index_b}`;
+}
+
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${num(v * 100)} %`);
 
 export function CompareResults(p: { cmp: Comparison; selected: number | null; onSelect: (i: number) => void }) {
   const [byRisk, setByRisk] = useState(true);
   const rows = useMemo(() => {
     const r = [...p.cmp.rows];
-    if (byRisk) r.sort((a, b) => ORDER[a.verdict] - ORDER[b.verdict] || a.index - b.index);
+    if (byRisk) r.sort((a, b) => ORDER[a.verdict] - ORDER[b.verdict] || rowId(a) - rowId(b));
     return r;
   }, [p.cmp, byRisk]);
   const res = p.cmp.resolution_s;
-  const sel = p.cmp.rows.find((r) => r.index === p.selected) ?? null;
+  const sel = p.cmp.rows.find((r) => rowId(r) === p.selected) ?? null;
   const dt = (m: Metrics | null) => (m && (m.status === "ok" || m.status === "reference") ? measuredText(m.dt, res)
     : m ? p.cmp.status_labels[m.status] ?? m.status : "—");
 
@@ -41,16 +49,16 @@ export function CompareResults(p: { cmp: Comparison; selected: number | null; on
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.index} className={`${p.selected === r.index ? "selected" : ""} v-${r.verdict}`}
-                onClick={() => p.onSelect(r.index)} data-test={`cmp-row-${r.index}`} tabIndex={0}
-                onKeyDown={(e) => { if (e.key === "Enter") p.onSelect(r.index); }}>
-                <td className="mono">D{r.index}</td>
+              <tr key={rowId(r)} className={`${p.selected === rowId(r) ? "selected" : ""} v-${r.verdict}`}
+                onClick={() => p.onSelect(rowId(r))} data-test={`cmp-row-${rowId(r)}`} tabIndex={0}
+                onKeyDown={(e) => { if (e.key === "Enter") p.onSelect(rowId(r)); }}>
+                <td className="mono" data-test={`cmp-ch-${rowId(r)}`}>{chLabel(r)}</td>
                 <td className="name-cell">{r.name_a ?? r.name_b}{r.name_a && r.name_b && r.name_a !== r.name_b ? ` / ${r.name_b}` : ""}</td>
                 <td><Pill tone={TONE[r.verdict]}>{p.cmp.verdict_labels[r.verdict]}</Pill></td>
                 <td className="why-cell" title={r.reasons.map((x) => x.text).join("\n")}>
                   {r.reasons.length ? r.reasons[0].text + (r.reasons.length > 1 ? `  (+${r.reasons.length - 1} more)` : "") : ""}
                 </td>
-                <td className="num-col mono strong" data-test={`cmp-delta-${r.index}`}>
+                <td className="num-col mono strong" data-test={`cmp-delta-${rowId(r)}`}>
                   {r.dt_delta === null ? "—" : `${r.dt_delta > 0 ? "+" : ""}${measuredText(r.dt_delta, res)}`}
                 </td>
                 <td className="num-col mono">{dt(r.a)}</td>
@@ -96,7 +104,7 @@ function Detail({ cmp, r }: { cmp: Comparison; r: CompareRow }) {
   return (
     <>
       <div className="evidence-head">
-        <span className="eyebrow">D{r.index} · {r.name_a ?? r.name_b}</span>
+        <span className="eyebrow">{chLabel(r)} · {r.name_a ?? r.name_b}{r.name_a && r.name_b && r.name_a !== r.name_b ? ` / ${r.name_b}` : ""}</span>
         <Pill tone={TONE[r.verdict]}>{cmp.verdict_labels[r.verdict]}</Pill>
       </div>
       {r.reasons.length > 0 ? (

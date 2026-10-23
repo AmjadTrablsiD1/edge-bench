@@ -129,10 +129,97 @@ def test_compare_workbook(pair, tmp_path):
     assert wb.sheetnames == ["Comparison", "Baseline (A)", "New (B)", "Settings"]
     ws = wb["Comparison"]
     hdr = [x.value for x in ws[1]]
-    rows = {r[0].value: [x.value for x in r] for r in ws.iter_rows(min_row=2)}
+    rows = {r[0].value: [x.value for x in r] for r in ws.iter_rows(min_row=2)}   # keyed by channel A
     reset = rows[1]
     assert reset[hdr.index("Verdict")] == "Changed"
     assert reset[hdr.index("Δt A [µs]")] == 2000 and reset[hdr.index("Δt B [µs]")] == 2500
     assert reset[hdr.index("B − A [µs]")] == 500
     assert rows[3][hdr.index("Verdict")] == "Critical"
     assert "Edge disappeared" in rows[3][hdr.index("Why")]
+
+
+# ------------------------------------------------------------ match by name
+
+REWIRED = FIX / "power_up_new_fw_rewired.csv"
+
+
+def _csv(path: Path, chans: dict[str, tuple[int, list[float]]], end: float = 1e-2) -> Path:
+    """A tiny Logic 2 digital CSV: {name: (initial level, edge times)}."""
+    names = list(chans)
+    ticks = sorted({round(t * 1e9) for _, ts in chans.values() for t in ts})
+    state = [chans[n][0] for n in names]
+    rows = ["Time [s]," + ",".join(names), "0.000000000," + ",".join(map(str, state))]
+    for k in ticks:
+        for i, n in enumerate(names):
+            state[i] ^= [round(t * 1e9) for t in chans[n][1]].count(k) & 1
+        rows.append(f"{k * 1e-9:.9f}," + ",".join(map(str, state)))
+    rows.append(f"{end:.9f}," + ",".join(map(str, state)))
+    path.write_text("\n".join(rows) + "\n")
+    return path
+
+
+def test_by_name_on_rewired_probes_gives_the_same_verdicts(pair):
+    """Probes moved to other inputs: by name must equal the original by-number comparison."""
+    a, b = pair
+    rewired = csv_digital.load(REWIRED)
+    want = {r.name_a: (r.verdict, r.dt_delta, [x.metric for x in r.reasons])
+            for r in compare(a, b, Settings(ref_channel=0)).rows}
+    got_cmp = compare(a, rewired, Settings(ref_channel=0), match="name")
+    got = {r.name_a: (r.verdict, r.dt_delta, [x.metric for x in r.reasons]) for r in got_cmp.rows}
+    assert got == want
+    rows = {r.name_a: r for r in got_cmp.rows}
+    assert (rows["RESET_N"].index, rows["RESET_N"].index_b, rows["RESET_N"].name_b) == (1, 3, "Reset_N")
+    assert got_cmp.reference_b["name"] == "PWR_GOOD" and got_cmp.reference_b["channel"] == 1
+    assert any("on a different channel in B" in n for n in got_cmp.notes)
+
+
+def test_by_number_on_rewired_probes_is_wrong_and_says_so(pair):
+    a, _ = pair
+    c = compare(a, csv_digital.load(REWIRED), Settings(ref_channel=0))
+    assert c.summary["same"] < 3                                    # garbage pairings
+    assert any("try matching by name" in n for n in c.notes)
+
+
+def test_exclusions_follow_the_name(pair):
+    a, _ = pair
+    c = compare(a, csv_digital.load(REWIRED), Settings(ref_channel=0, excluded=[3]), match="name")
+    pll = next(r for r in c.rows if r.name_a == "PLL_LOCK")
+    assert pll.verdict == "excluded" and pll.index_b == 7
+    assert 7 in c.result_b.settings.excluded
+
+
+def test_unmatched_and_duplicate_names(tmp_path):
+    a = csv_digital.load(_csv(tmp_path / "a.csv", {"CLK": (0, [1e-3]), "DATA": (0, [2e-3]), "Data": (0, [3e-3])}))
+    b = csv_digital.load(_csv(tmp_path / "b.csv", {"EN": (0, [5e-3]), "clk": (0, [1e-3]), "DATA": (0, [2e-3])}))
+    c = compare(a, b, Settings(ref_channel=0), match="name")
+    pairs = [(r.index, r.index_b, r.verdict) for r in c.rows]
+    assert pairs == [(0, 1, "same"), (1, 2, "same"), (2, None, "missing"), (0, 0, "missing")]
+    assert c.rows[2].reasons[0].text == "No channel with this name in B"
+    assert c.rows[3].name_b == "EN" and c.rows[3].name_a is None
+    assert any("paired in channel order" in n for n in c.notes)
+
+
+def test_reference_name_missing_in_b(tmp_path):
+    a = csv_digital.load(_csv(tmp_path / "a.csv", {"TRIG": (0, [1e-3]), "OUT": (0, [2e-3])}))
+    b = csv_digital.load(_csv(tmp_path / "b.csv", {"START": (0, [1e-3]), "OUT": (0, [2e-3])}))
+    c = compare(a, b, Settings(ref_channel=0), match="name")
+    assert c.reference_a is not None and c.reference_b is None
+    assert any("no channel named like A's reference (TRIG)" in n for n in c.notes)
+
+
+def test_unknown_match_mode(pair):
+    a, b = pair
+    with pytest.raises(ValueError, match="channel matching"):
+        compare(a, b, Settings(ref_channel=0), match="colour")
+
+
+def test_workbook_records_name_matching(pair, tmp_path):
+    a, _ = pair
+    c = compare(a, csv_digital.load(REWIRED), Settings(ref_channel=0), match="name")
+    wb = load_workbook(excel.write_comparison(c, tmp_path / "n.xlsx"))
+    ws = wb["Comparison"]
+    hdr = [x.value for x in ws[1]]
+    reset = next([x.value for x in r] for r in ws.iter_rows(min_row=2) if r[2].value == "RESET_N")
+    assert (reset[hdr.index("Channel A")], reset[hdr.index("Channel B")], reset[hdr.index("Name (B)")]) == (1, 3, "Reset_N")
+    settings = {r[0].value: r[1].value for r in wb["Settings"].iter_rows(min_row=2)}
+    assert settings["Matching"].startswith("by name")

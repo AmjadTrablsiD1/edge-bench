@@ -9,6 +9,9 @@
       IRQ_N     idles low instead of high                         -> critical
       LED       harder bounce (10 ns spikes)                      -> changed
       PWR_GOOD, CLK_EN, SPI_CS_N unchanged                        -> same
+  power_up_new_fw_rewired.csv   the same new firmware, probes moved to other
+      inputs (LED on D0, PWR_GOOD on D1, ...) and RESET_N spelt "Reset_N" --
+      for matching channels by name
 """
 from pathlib import Path
 
@@ -38,12 +41,20 @@ def events(new_fw: bool):
     return init, ev
 
 
-def write(path: Path, new_fw: bool) -> None:
+REWIRED = ["LED", "PWR_GOOD", "IRQ_N", "Reset_N", "SPI_SCK", "CLK_EN", "SPI_CS_N", "PLL_LOCK"]
+
+
+def write(path: Path, new_fw: bool, order: list[str] | None = None) -> None:
     init, ev = events(new_fw)
+    names = order or NAMES
+    # column k of the file carries the signal whose canonical name matches names[k]
+    src = [[n.upper() for n in NAMES].index(n.upper()) for n in names]
+    init = [init[i] for i in src]
+    ev = {k: ev[i] for k, i in enumerate(src)}
     grid = {i: [round(x / NS) for x in v] for i, v in ev.items()}
     ticks = sorted({k for v in grid.values() for k in v})
     state = init[:]
-    rows = ["Time [s]," + ",".join(NAMES), "0.000000000," + ",".join(map(str, state))]
+    rows = ["Time [s]," + ",".join(names), "0.000000000," + ",".join(map(str, state))]
     for k in ticks:
         for i in range(8):
             state[i] ^= grid[i].count(k) & 1
@@ -56,3 +67,4 @@ if __name__ == "__main__":
     here = Path(__file__).parent
     write(here / "power_up_sequence.csv", new_fw=False)
     write(here / "power_up_new_fw.csv", new_fw=True)
+    write(here / "power_up_new_fw_rewired.csv", new_fw=True, order=REWIRED)

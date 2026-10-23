@@ -243,6 +243,7 @@ class CompareReq(BaseModel):
     settings: dict
     tolerance: dict | None = None
     span_s: float | None = None
+    match: str = C.compare.default_match
 
 
 def _compare(req: CompareReq) -> compare.Comparison:
@@ -256,7 +257,11 @@ def _compare(req: CompareReq) -> compare.Comparison:
     if req.span_s is not None and req.span_s <= 0:
         raise HTTPException(422, "The compare span must be more than 0, or empty for all of it.")
     try:
-        return compare.compare(a.capture, b.capture, _settings(req.settings), tol, req.span_s)
+        if req.match not in C.compare.match_modes:
+            raise ValueError(f"channel matching must be one of {C.compare.match_modes}")
+        return compare.compare(a.capture, b.capture, _settings(req.settings), tol, req.span_s, req.match)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     except KeyError as exc:
         raise HTTPException(422, f"{exc.args[0]} (in one of the two captures)") from exc
     except RuntimeError as exc:

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "./api";
 import { CompareResults } from "./components/CompareResults";
-import { compareFocus, CompareWave } from "./components/CompareWave";
+import { compareFocus, CompareWave, rowId } from "./components/CompareWave";
 import { Inspector, logic2Text } from "./components/Inspector";
 import { Rail } from "./components/Rail";
 import { Results } from "./components/Results";
@@ -130,7 +130,7 @@ export default function App() {
   const { settings, errors } = useMemo(() => toSettings(form), [form]);
   const settingsKey = JSON.stringify(settings);
   const { tolerance, span_s, errors: tolErrors } = useMemo(() => toTolerance(form), [form]);
-  const cmpKey = JSON.stringify([aId, bId, settings, tolerance, span_s, !!capA, !!capB]);
+  const cmpKey = JSON.stringify([aId, bId, settings, tolerance, span_s, form.matchBy, !!capA, !!capB]);
 
   useEffect(() => {
     const id = ++compareReq.current;
@@ -139,7 +139,7 @@ export default function App() {
     }
     setCmp((c) => (c && c.file_a === fileA?.path && c.file_b === fileB?.path ? c : null));
     const t = window.setTimeout(() => {
-      api.compare(aId, bId, settings, tolerance, span_s)
+      api.compare(aId, bId, settings, tolerance, span_s, form.matchBy)
         .then((c) => { if (id === compareReq.current) { setCmp(c); setCmpError(null); } })
         .catch((e) => { if (id === compareReq.current) { setCmp(null); setCmpError(e.message); } });
     }, 150);
@@ -196,7 +196,7 @@ export default function App() {
     try {
       const { paths } = await api.dialog("save", dirname(fileA.path), C.compare.filename);
       if (!paths.length) return;
-      const r = await api.exportCompare(aId, bId, settings, tolerance, span_s, form.exportUnit, paths[0]);
+      const r = await api.exportCompare(aId, bId, settings, tolerance, span_s, form.matchBy, form.exportUnit, paths[0]);
       toast("ok", `Saved ${basename(r.path)} · comparison of 2 captures`,
         { label: "Show in folder", run: () => { api.reveal(r.path).catch(fail); } });
     } catch (e) { fail(e); } finally { setBusy(false); }
@@ -233,7 +233,7 @@ export default function App() {
       if (!cur) return;
       const v = comparing ? cview : view, setV = comparing ? setCview : setView;
       const span = v.t1 - v.t0;
-      const chans = comparing && cmp ? cmp.rows.map((r) => r.index) : cur.channels.map((c) => c.index);
+      const chans = comparing && cmp ? cmp.rows.map(rowId) : cur.channels.map((c) => c.index);
       if (e.key === "f" || e.key === "F") setV(comparing ? wholeCompare() : { t0: cur.begin, t1: cur.end });
       else if (e.key === "r" || e.key === "R") setV(comparing ? compareFocus(cmp) : focusView(result, cur.begin, cur.end));
       else if (e.key === "+" || e.key === "=") setV({ t0: v.t0 + span * 0.1, t1: v.t1 - span * 0.1 });

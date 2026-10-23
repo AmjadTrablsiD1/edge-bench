@@ -121,7 +121,14 @@ export function Inspector(p: Props) {
 
             {p.mode === "compare" && (
               <section className="well" data-test="compare-settings">
-                <h3 className="well-cap">Compare tolerances</h3>
+                <h3 className="well-cap">Compare</h3>
+                <Field label="Match channels" hint={f.matchBy === "name"
+                  ? "Same name in A and B, wherever it is wired (case and spaces ignored). The reference follows its name."
+                  : "D0 with D0, D1 with D1 … — use By name if probes were moved between captures."}>
+                  <Segmented label="Match channels" value={f.matchBy} testId="match-by"
+                    onChange={(v) => set({ matchBy: v })}
+                    options={[{ value: "number", label: "By number" }, { value: "name", label: "By name" }]} />
+                </Field>
                 <p className="field-hint tight">A difference is flagged when it exceeds the absolute <b>or</b> the relative limit, whichever is larger — never below 2 samples.</p>
                 <div className="field-row">
                   <Field label="Delay ±" htmlFor="td" error={p.tolErrors.tolDelay} hint="Δt after the reference">
@@ -265,7 +272,7 @@ function CompareCoverage({ cmp }: { cmp: Comparison | null }) {
           <li>Events before the reference, and anything after the span.</li>
           <li>The order of every edge in a burst: bursts are compared by count, time high and shortest pulse, not edge by edge.</li>
           <li>Protocol content (bytes on SPI/I²C/UART) and analog levels.</li>
-          <li>Channels are matched by number (D3 with D3), not by name.</li>
+          <li>{cmp?.match === "name" ? "Channels are matched by name; a name found in only one capture is listed as not in both." : "Channels are matched by number (D3 with D3); switch to By name if probes moved."}</li>
         </ul>
       </section>
       {(cmp?.notes.length ?? 0) > 0 && (

@@ -171,19 +171,20 @@ def write_comparison(cmp, out: Path, unit: str = C.units.default_export_unit) ->
     wb = Workbook()
     ws = wb.active
     ws.title = C.compare.sheet_compare
-    cols = ["Channel", "Name (A)", "Name (B)", "Verdict",
+    cols = ["Channel A", "Channel B", "Name (A)", "Name (B)", "Verdict",
             f"Δt A [{unit}]", f"Δt B [{unit}]", f"B − A [{unit}]", "Edge A", "Edge B",
             "Level@ref A", "Level@ref B", f"First pulse A [{unit}]", f"First pulse B [{unit}]",
             "Edges A", "Edges B", "Time high A", "Time high B",
             f"Shortest pulse A [{unit}]", f"Shortest pulse B [{unit}]", "Why"]
-    widths = [9, 20, 20, 11] + [X.col_width] * 3 + [9, 9, 11, 11] + [X.col_width] * 2 + [9, 9, 11, 11] \
+    widths = [10, 10, 20, 20, 11] + [X.col_width] * 3 + [9, 9, 11, 11] + [X.col_width] * 2 + [9, 9, 11, 11] \
         + [X.col_width] * 2 + [80]
     _header(ws, cols, widths)
     for r in cmp.rows:
         a, b = r.a, r.b
         g = lambda m, k: getattr(m, k) if m is not None else None  # noqa: E731
         ws.append([
-            r.index, r.name_a, r.name_b, verdicts.get(r.verdict, r.verdict),
+            r.index if r.name_a is not None else None, r.index_b, r.name_a, r.name_b,
+            verdicts.get(r.verdict, r.verdict),
             _num(g(a, "dt"), sc, res), _num(g(b, "dt"), sc, res), _num(r.dt_delta, sc, res),
             g(a, "edge"), g(b, "edge"), g(a, "level_at_ref"), g(b, "level_at_ref"),
             _num(g(a, "first_pulse"), sc, res), _num(g(b, "first_pulse"), sc, res),
@@ -196,11 +197,11 @@ def write_comparison(cmp, out: Path, unit: str = C.units.default_export_unit) ->
         row = ws.max_row
         fill = {"critical": _MISS_FILL, "changed": _CHANGED_FILL}.get(r.verdict)
         if fill:
-            for c in range(1, 5):
+            for c in range(1, 6):
                 ws.cell(row=row, column=c).fill = fill
-        for c in (5, 6, 7, 12, 13, 18, 19):
+        for c in (6, 7, 8, 13, 14, 19, 20):
             ws.cell(row=row, column=c).number_format = "0.0########"
-        for c in (16, 17):
+        for c in (17, 18):
             ws.cell(row=row, column=c).number_format = "0.0%"
         ws.cell(row=row, column=len(cols)).alignment = Alignment(wrap_text=True, vertical="top")
     ws.auto_filter.ref = ws.dimensions
@@ -232,7 +233,8 @@ def write_comparison(cmp, out: Path, unit: str = C.units.default_export_unit) ->
         ("Edge-count tolerance", f"±{t.count_abs} edges or ±{fmt_pct(t.count_rel)}, whichever is larger"),
         ("Time-high tolerance", f"±{fmt_pct(t.duty_abs)} of the span"),
         ("Never flagged", f"differences up to {C.compare.resolution_floor_samples} sample periods"),
-        ("Matching", "channels matched by number (D0 with D0)"),
+        ("Matching", "by name (case and extra spaces ignored)" if cmp.match == "name"
+                     else "by number (D0 with D0)"),
     ]
     for r in rows:
         st.append(list(r))

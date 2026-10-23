@@ -78,6 +78,8 @@ export interface AppStatus {
   platform: string; cache_bytes: number; cache_dir: string; cache_max_gb: number;
 }
 
+export type MatchBy = "number" | "name";
+
 export type Verdict = "same" | "changed" | "critical" | "excluded" | "missing";
 
 export interface Metrics {
@@ -87,7 +89,7 @@ export interface Metrics {
 }
 
 export interface CompareRow {
-  index: number; name_a: string | null; name_b: string | null; verdict: Verdict;
+  index: number; index_b: number | null; name_a: string | null; name_b: string | null; verdict: Verdict;
   a: Metrics | null; b: Metrics | null;
   reasons: { metric: string; severity: "changed" | "critical"; text: string }[];
   dt_delta: number | null;
@@ -102,7 +104,7 @@ export interface Comparison {
   file_a: string; file_b: string;
   reference_a: Reference | null; reference_b: Reference | null;
   span_s: number | null; resolution_s: number | null;
-  tolerance: Tolerance; settings: Settings;
+  tolerance: Tolerance; settings: Settings; match: MatchBy;
   rows: CompareRow[];
   summary: Record<Verdict, number>;
   notes: string[];

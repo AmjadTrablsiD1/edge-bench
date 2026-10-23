@@ -2,7 +2,7 @@
 // browser, and its conversion to the server's Settings (seconds, validated).
 import { C } from "./constants";
 import { parseDecimal, unitByLabel } from "./format";
-import type { EdgeKind, Settings, Tolerance } from "./types";
+import type { EdgeKind, MatchBy, Settings, Tolerance } from "./types";
 import type { Quantity } from "./components/ui";
 
 export interface Form {
@@ -24,6 +24,7 @@ export interface Form {
   tolCountPct: string;
   tolDutyPct: string;
   span: Quantity;
+  matchBy: MatchBy;
 }
 
 const KEY = `${C.ui.storage_prefix}.form.v2`;
@@ -48,6 +49,7 @@ export const DEFAULT_FORM: Form = {
   tolCountPct: clean(C.compare.count_rel * 100),
   tolDutyPct: clean(C.compare.duty_abs * 100),
   span: { text: "", unit: "ms" },
+  matchBy: C.compare.default_match as MatchBy,
 };
 
 export function loadForm(): Form {

@@ -261,6 +261,11 @@
     "sheet_compare": "Comparison",
     "sheet_a": "Baseline (A)",
     "sheet_b": "New (B)",
-    "filename": "edge_bench_compare.xlsx"
+    "filename": "edge_bench_compare.xlsx",
+    "match_modes": [
+      "number",
+      "name"
+    ],
+    "default_match": "number"
   }
 }

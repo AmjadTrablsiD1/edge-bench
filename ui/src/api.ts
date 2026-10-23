@@ -1,7 +1,7 @@
 // Thin fetch wrappers.  Errors become one readable sentence (the server's
 // `detail`), never a stack trace in the UI.
 import { API } from "./constants";
-import type { AppStatus, Comparison, FileEntry, Result, Settings, Tolerance, Wave } from "./types";
+import type { AppStatus, Comparison, FileEntry, MatchBy, Result, Settings, Tolerance, Wave } from "./types";
 
 export class ApiError extends Error {}
 
@@ -46,10 +46,10 @@ export const api = {
     post<{ path: string; captures: number; skipped: string[] }>("export", { file_ids, settings, unit, path }),
   reveal: (path: string) => post<{ ok: boolean }>("reveal", { path }),
   setLogic2: (path: string | null) => post<AppStatus["logic2"]>("settings/logic2", { path }),
-  compare: (a_id: number, b_id: number, settings: Settings, tolerance: Tolerance, span_s: number | null, signal?: AbortSignal) =>
-    post<Comparison>("compare", { a_id, b_id, settings, tolerance, span_s }, signal),
-  exportCompare: (a_id: number, b_id: number, settings: Settings, tolerance: Tolerance, span_s: number | null, unit: string, path: string) =>
-    post<{ path: string; captures: number; skipped: string[] }>("export/compare", { a_id, b_id, settings, tolerance, span_s, unit, path }),
+  compare: (a_id: number, b_id: number, settings: Settings, tolerance: Tolerance, span_s: number | null, match: MatchBy) =>
+    post<Comparison>("compare", { a_id, b_id, settings, tolerance, span_s, match }),
+  exportCompare: (a_id: number, b_id: number, settings: Settings, tolerance: Tolerance, span_s: number | null, match: MatchBy, unit: string, path: string) =>
+    post<{ path: string; captures: number; skipped: string[] }>("export/compare", { a_id, b_id, settings, tolerance, span_s, match, unit, path }),
   quit: () => post<{ ok: boolean }>("quit", {}),
   clearCache: () => post<{ cache_bytes: number }>("cache/clear", {}),
 };

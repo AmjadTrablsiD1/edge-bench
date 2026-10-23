@@ -41,7 +41,7 @@ Inside `app/`:
 | `edges.py` | `find_edge()` — binary search to t, parity for direction, optional glitch filter (state machine over the few edges near t) |
 | `measure.py` | Reference resolution (manual / auto-first-change) and per-channel Δt. Returns plain dataclasses |
 | `waveform.py` | Decimation for the viewport: exact edges when few, per-pixel "busy" buckets when many |
-| `compare.py` | Baseline (A) against new (B): same settings, each aligned on its own reference; per-channel metrics over a common span; verdicts same / changed / critical with reasons |
+| `compare.py` | Pairs channels (`pair_channels`: by number, or by name with the reference and exclusions translated to B's numbers), then baseline (A) against new (B): same settings, each aligned on its own reference; per-channel metrics over a common span; verdicts same / changed / critical with reasons |
 | `units.py` | Time as text for sentences the core writes (reasons, Excel notes), same digits rule as the UI |
 | `excel.py` | Workbook writers: results (Results, Batch matrix, Settings) and comparison (Comparison, Baseline, New, Settings) |
 | `logic2.py` | Find / connect to / launch Logic 2, export binary, verify the files are complete |
@@ -109,6 +109,8 @@ Inside `app/`:
 | Windows zip with prebuilt UI + wheels | Work PCs have no Node.js and may sit behind a proxy | Building on the PC |
 
 ## Known sharp edges
+
+- Compare rows are not unique by channel number once channels are matched by name (B's D0 can sit beside A's D0). The UI keys rows with `rowId()` (A's number, or -(B's number + 1)); never key them by `index` alone.
 
 - Compare: "time high" is only compared on channels with >= `duty_min_edges` edges. On a single transition it restates Δt, and before this rule a shifted edge was flagged twice, so raising the delay tolerance could never clear it.
 - UI requests use "newest request wins" (an id counter), not AbortController. An abort landing while a finished response was still being read once lost a comparison result.

@@ -7,7 +7,7 @@ import { api } from "../api";
 import { chartScale, drawSegments, token, useCanvas } from "../canvas";
 import { C } from "../constants";
 import { measuredText, niceStep, signedTime } from "../format";
-import type { CaptureSummary, Comparison, Verdict, Wave } from "../types";
+import type { CaptureSummary, CompareRow, Comparison, Verdict, Wave } from "../types";
 import type { View } from "./Waveform";
 
 const W = C.waveform;
@@ -22,6 +22,10 @@ interface Props {
   onSelect: (index: number) => void;
   theme: string;
 }
+
+/** Unique id per comparison row: A's channel number, or -(B's number + 1) for a
+ *  channel only in B -- with name matching, B's D0 can sit beside A's D0. */
+export const rowId = (r: CompareRow) => (r.name_a !== null ? r.index : -((r.index_b ?? r.index) + 1));
 
 export const VERDICT_TOKEN: Record<Verdict, string> = {
   critical: "q-miss", changed: "gold", same: "positive", excluded: "muted", missing: "muted",
@@ -44,7 +48,7 @@ export function CompareWave(p: Props) {
   const overlay = useRef<HTMLCanvasElement>(null);
   const drag = useRef<{ x: number; view: View; moved: boolean } | null>(null);
 
-  const indices = p.cmp ? p.cmp.rows.map((r) => r.index)
+  const indices = p.cmp ? p.cmp.rows.map(rowId)
     : [...new Set([...p.capA.channels, ...p.capB.channels].map((c) => c.index))].sort((a, b) => a - b);
   const n = indices.length;
   const refA = p.cmp?.reference_a?.time ?? p.capA.begin;
@@ -76,11 +80,11 @@ export function CompareWave(p: Props) {
       ctx.fillText(Math.abs(t) < step * 1e-6 ? "0" : signedTime(t), xx, g.axisY + 6 * g.k);
     }
 
-    const rows = new Map(p.cmp?.rows.map((r) => [r.index, r]) ?? []);
+    const rows = new Map(p.cmp?.rows.map((r) => [rowId(r), r]) ?? []);
     const wa = new Map(waveA?.channels.map((c) => [c.index, c]) ?? []);
     const wb = new Map(waveB?.channels.map((c) => [c.index, c]) ?? []);
-    const nameOf = (i: number) => p.capA.channels.find((c) => c.index === i)?.name
-      ?? p.capB.channels.find((c) => c.index === i)?.name ?? `D${i}`;
+    const nameOf = (i: number) => rows.get(i)?.name_a ?? rows.get(i)?.name_b
+      ?? p.capA.channels.find((c) => c.index === i)?.name ?? p.capB.channels.find((c) => c.index === i)?.name ?? `D${i}`;
 
     indices.forEach((idx, i) => {
       const y0 = g.top + i * g.laneH;
@@ -106,9 +110,10 @@ export function CompareWave(p: Props) {
       ctx.font = font(9, true);
       ctx.textAlign = "right";
       ctx.fillStyle = token("q-trace");
-      ctx.fillText("A", g.gutter - 8 * g.k, y0 + sub / 2);
+      const ia = row ? (row.name_a !== null ? row.index : null) : idx, ib = row ? row.index_b : idx;
+      ctx.fillText(ia === null ? "A —" : `A D${ia}`, g.gutter - 8 * g.k, y0 + sub / 2);
       ctx.fillStyle = token("q-new");
-      ctx.fillText("B", g.gutter - 8 * g.k, y0 + sub + sub / 2);
+      ctx.fillText(ib === null ? "B —" : `B D${ib}`, g.gutter - 8 * g.k, y0 + sub + sub / 2);
 
       const hi = (r0: number) => r0 + sub * 0.22, lo = (r0: number) => r0 + sub * 0.82;
       ctx.save();
@@ -124,8 +129,11 @@ export function CompareWave(p: Props) {
         ctx.globalAlpha = 1;
       }
 
-      drawSegments(ctx, wa.get(idx)?.segments ?? [], xa, hi(y0), lo(y0), token("q-trace"), token("q-trace-2"), g.k);
-      drawSegments(ctx, wb.get(idx)?.segments ?? [], xb, hi(y0 + sub), lo(y0 + sub), token("q-new"), token("q-new-2"), g.k);
+      // A's channel is `idx` (unless the row exists only in B); B's is index_b
+      const aIdx = row ? (row.name_a !== null ? row.index : null) : idx;
+      const bIdx = row ? row.index_b : idx;
+      drawSegments(ctx, aIdx === null ? [] : wa.get(aIdx)?.segments ?? [], xa, hi(y0), lo(y0), token("q-trace"), token("q-trace-2"), g.k);
+      drawSegments(ctx, bIdx === null ? [] : wb.get(bIdx)?.segments ?? [], xb, hi(y0 + sub), lo(y0 + sub), token("q-new"), token("q-new-2"), g.k);
 
       // edge markers + labels
       const mark = (dt: number | null, r0: number, colour: string, label: string) => {

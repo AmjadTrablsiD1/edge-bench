@@ -185,11 +185,11 @@ test("bad input says what is wrong", async ({ page }) => {
 
 const NEW_FW = path.join(FIX, "power_up_new_fw.csv");
 
-async function openPair(page: Page) {
+async function openPair(page: Page, b: string = NEW_FW) {
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  for (const p of [POWER, NEW_FW]) {
+  for (const p of [POWER, b]) {
     await page.locator("[data-test=path-input]").fill(p);
     await page.locator("[data-test=path-input]").press("Enter");
     await expect(page.locator("[data-test=file-item]", { hasText: path.basename(p) })).toContainText("CSV", { timeout: 20_000 });
@@ -252,4 +252,21 @@ test("compare: shell stays an instrument", async ({ page }) => {
   expect(await pageScrolls(page)).toEqual({ x: false, y: false });
   expect(await clippedElements(page, [".app-header > *", ".toolbar > *", ".status-bar > *"])).toEqual([]);
   await page.screenshot({ path: `${SHOTS}/compare-laptop.png` });
+});
+
+test("compare: probes moved between captures, matched by name", async ({ page }, info) => {
+  await openPair(page, path.join(FIX, "power_up_new_fw_rewired.csv"));
+  // By number pairs the wrong signals and says so
+  await expect(page.locator("[data-test=compare-evidence]")).toContainText("try matching by name");
+  await page.locator("[data-test=match-by] button", { hasText: "By name" }).click();
+  await expect(page.locator("[data-test=compare-summary]")).toHaveText(/2\s*critical\s*3\s*changed\s*3\s*same/);
+  await expect(page.locator("[data-test=cmp-ch-1]")).toHaveText("D1 ↔ D3");             // RESET_N -> Reset_N on D3
+  await expect(page.locator("[data-test=cmp-row-1]")).toContainText("Reset_N");
+  await expect(page.locator("[data-test=cmp-delta-1]")).toHaveText("+500 µs");
+  await expect(page.locator("[data-test=cmp-row-3]")).toContainText("Critical");         // PLL_LOCK on D7 in B
+  await page.screenshot({ path: `${SHOTS}/${info.project.name}-06-compare-by-name.png` });
+  await axe(page);
+  // the choice is remembered
+  await page.reload();
+  await expect(page.locator("[data-test=cmp-ch-1]")).toHaveText("D1 ↔ D3", { timeout: 20_000 });
 });

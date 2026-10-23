@@ -63,6 +63,12 @@ and each is aligned on its own reference edge. Every channel is then marked:
 | **Changed** | Δt, the first pulse width, the edge count, the time spent high (toggling channels only) or the shortest pulse moved beyond tolerance |
 | **Same** | nothing beyond tolerance |
 
+**Match channels** by number (D3 with D3) or **by name**. Use name matching
+when probes were moved between captures: `RESET_N` on D1 in A is then compared
+with `Reset_N` on D3 in B (case and extra spaces are ignored), the reference
+follows its name, and the table shows `D1 ↔ D3`. A name found in only one
+capture is listed as "Not in both".
+
 Tolerances are "absolute or relative, whichever is larger", set separately
 for delays (default ±1 µs / ±5 %) and pulse widths (±10 ns / ±10 %).
 Differences of up to 2 sample periods are never flagged, because each edge
@@ -98,8 +104,8 @@ along with the Logic 2 it started.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 cd ui && npm install && npm run build && cd ..
-.venv/bin/python -m pytest -q          # core + API + compare + Logic 2 end-to-end (66)
-npm install && npx playwright test     # real UI, both themes, axe, fold probe (22)
+.venv/bin/python -m pytest -q          # core + API + compare + Logic 2 end-to-end (74)
+npm install && npx playwright test     # real UI, both themes, axe, fold probe (24)
 .venv/bin/python main.py               # run from the repo
 ```
 
@@ -121,7 +127,8 @@ column / repeated cycles": [ARCHITECTURE.md](ARCHITECTURE.md). Plan:
   instance may not start. On macOS two instances run side by side (tested).
   The fallback is Preferences → Automation → enable the server on port 10430;
   Edge Bench then uses that window.
-- **Compare matches channels by number** (D3 with D3), not by name. It
+- **Compare** pairs channels by number or by name. With names used twice in
+  one capture, they are paired in channel order (and a note says so). It
   compares one reference event and summary numbers over the span (count, time
   high, shortest pulse), not every edge of a burst one by one.
 - **One reference event per capture.** Repeated cycles with statistics, the

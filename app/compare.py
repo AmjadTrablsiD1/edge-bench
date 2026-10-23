@@ -29,7 +29,7 @@ periods, because each edge time is only good to ±1 sample.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 import numpy as np
 
@@ -83,7 +83,8 @@ class Reason:
 
 @dataclass
 class Row:
-    index: int
+    index: int                  # channel number in A (in B when the channel is only in B)
+    index_b: int | None         # channel number in B -- differs from index when matched by name
     name_a: str | None
     name_b: str | None
     verdict: str            # same | changed | critical | excluded | missing
@@ -103,6 +104,7 @@ class Comparison:
     resolution_s: float | None
     tolerance: Tolerance
     settings: Settings
+    match: str                  # number | name
     rows: list[Row]
     summary: dict
     notes: list[str]
@@ -221,16 +223,95 @@ def _compare_row(row: Row, tol: Tolerance, res: float | None) -> None:
                    else "changed" if reasons else "same")
 
 
-def compare(cap_a: Capture, cap_b: Capture, s: Settings, tol: Tolerance | None = None,
-            span_s: float | None = None) -> Comparison:
-    tol = tol or Tolerance()
-    ra, rb = run(cap_a, s), run(cap_b, s)
+def _norm(name: str) -> str:
+    return " ".join(name.split()).casefold()
+
+
+def pair_channels(cap_a: Capture, cap_b: Capture, match: str) -> tuple[list[tuple[int | None, int | None]], list[str]]:
+    """[(index in A, index in B)], A order first, then channels only in B.
+
+    number: D3 with D3.
+    name:   same name, ignoring case and extra spaces.  A name used twice in one
+            capture is paired in channel order (first with first), with a note.
+    """
     notes: list[str] = []
+    a_idx = [c.index for c in cap_a.channels]
+    b_idx = [c.index for c in cap_b.channels]
+    if match == "number":
+        pairs = [(i, i if i in b_idx else None) for i in a_idx] + [(None, i) for i in b_idx if i not in a_idx]
+        renamed = [f"D{i}: {cap_a.channel(i).name} / {cap_b.channel(i).name}"
+                   for i in a_idx if i in b_idx and _norm(cap_a.channel(i).name) != _norm(cap_b.channel(i).name)]
+        if renamed:
+            notes.append("Channels are matched by number; these have different names "
+                         "(try matching by name): " + "; ".join(renamed))
+        return pairs, notes
+    if match != "name":
+        raise ValueError(f"channel matching must be one of {K.match_modes}, not {match!r}")
+    groups_b: dict[str, list[int]] = {}
+    for c in cap_b.channels:
+        groups_b.setdefault(_norm(c.name), []).append(c.index)
+    seen_a: dict[str, int] = {}
+    dupes = set()
+    pairs: list[tuple[int | None, int | None]] = []
+    used_b: set[int] = set()
+    for c in cap_a.channels:
+        key = _norm(c.name)
+        k = seen_a.get(key, 0)
+        seen_a[key] = k + 1
+        cands = groups_b.get(key, [])
+        if k > 0 or len(cands) > 1:
+            dupes.add(c.name)
+        if k < len(cands):
+            pairs.append((c.index, cands[k]))
+            used_b.add(cands[k])
+        else:
+            pairs.append((c.index, None))
+    pairs += [(None, c.index) for c in cap_b.channels if c.index not in used_b]
+    if dupes:
+        notes.append("Names used more than once were paired in channel order: " + ", ".join(sorted(dupes)))
+    moved = [f"{cap_a.channel(a).name} D{a}→D{b}" for a, b in pairs if a is not None and b is not None and a != b]
+    if moved:
+        notes.append("Matched by name; on a different channel in B: " + "; ".join(moved))
+    return pairs, notes
+
+
+def _settings_for_b(s: Settings, pairs: list[tuple[int | None, int | None]]) -> tuple[Settings, str | None]:
+    """A's settings, with channel numbers translated to B's (reference, exclusions)."""
+    a_to_b = {a: b for a, b in pairs if a is not None}
+    sb = replace(s, excluded=[a_to_b[i] for i in s.excluded if a_to_b.get(i) is not None])
+    if s.ref_mode != "manual" or s.ref_channel is None:
+        return sb, None
+    b_ref = a_to_b.get(int(s.ref_channel))
+    if b_ref is None:
+        return sb, "missing"
+    return replace(sb, ref_channel=b_ref), None
+
+
+def compare(cap_a: Capture, cap_b: Capture, s: Settings, tol: Tolerance | None = None,
+            span_s: float | None = None, match: str = K.default_match) -> Comparison:
+    tol = tol or Tolerance()
+    pairs, notes = pair_channels(cap_a, cap_b, match)
+    sb, ref_problem = _settings_for_b(s, pairs)
+    ra = run(cap_a, s)
+    if ref_problem:
+        # B has no channel matching A's reference: B gets a result with no reference.
+        rb = Result(file=str(cap_b.path), reference=None, resolution_s=cap_b.resolution_s, settings=sb,
+                    channels=[ChannelResult(index=c.index, name=c.name, status="no_edge", edges_total=c.edge_count)
+                              for c in cap_b.channels], notes=list(cap_b.notes))
+        notes.append(f"Capture B has no channel named like A's reference "
+                     f"({cap_a.channel(int(s.ref_channel)).name}) — only levels can be compared.")
+    else:
+        rb = run(cap_b, sb)
     res_values = [r for r in (cap_a.resolution_s, cap_b.resolution_s) if r]
     res = max(res_values) if res_values else None
     if cap_a.sample_rate and cap_b.sample_rate and cap_a.sample_rate != cap_b.sample_rate:
         notes.append(f"Sample rates differ ({cap_a.sample_rate:.4g} vs {cap_b.sample_rate:.4g} S/s): "
                      f"times compared to the coarser ±{fmt_time(res)}.")
+    if s.ref_mode == "auto" and ra.reference and rb.reference:
+        pair_of_ref = dict((a, b) for a, b in pairs if a is not None).get(ra.reference.channel)
+        if pair_of_ref != rb.reference.channel:
+            notes.append(f"First channel to change differs: {ra.reference.name} in A, "
+                         f"{rb.reference.name} in B — each capture is aligned on its own.")
 
     span = None
     if ra.reference and rb.reference:
@@ -238,42 +319,40 @@ def compare(cap_a: Capture, cap_b: Capture, s: Settings, tol: Tolerance | None =
         span = room if span_s is None else min(span_s, room)
         if span_s is not None and span_s > room:
             notes.append(f"Span shortened to {fmt_time(room, res)}: the shorter capture ends there.")
-    else:
+    elif not ref_problem:
         missing = [n for n, r in (("A", ra), ("B", rb)) if r.reference is None]
         notes.append(f"No reference edge in capture {' and '.join(missing)} — only levels can be compared. "
                      "Check the reference settings.")
 
     by_a = {c.index: c for c in ra.channels}
     by_b = {c.index: c for c in rb.channels}
+    t_ref_a = ra.reference.time if ra.reference else cap_a.begin
+    t_ref_b = rb.reference.time if rb.reference else cap_b.begin
     rows: list[Row] = []
-    renamed = []
-    for idx in sorted(set(by_a) | set(by_b)):
-        ca, cb = by_a.get(idx), by_b.get(idx)
-        row = Row(index=idx, name_a=ca.name if ca else None, name_b=cb.name if cb else None,
+    for ia, ib in pairs:
+        ca = by_a.get(ia) if ia is not None else None
+        cb = by_b.get(ib) if ib is not None else None
+        row = Row(index=ia if ia is not None else ib, index_b=ib,
+                  name_a=ca.name if ca else None, name_b=cb.name if cb else None,
                   verdict="missing", a=None, b=None)
         rows.append(row)
-        if ca and cb and ca.name != cb.name:
-            renamed.append(f"D{idx}: {ca.name} / {cb.name}")
         if ca is None or cb is None:
+            what = "name" if match == "name" else "channel number"
             row.reasons.append(Reason("channel", "changed",
-                                      f"Channel only captured in {'A' if cb is None else 'B'}"))
+                                      f"No channel with this {what} in {'B' if cb is None else 'A'}"))
             continue
-        if idx in s.excluded and not (ra.reference and ra.reference.channel == idx):
+        if ia in s.excluded and not (ra.reference and ra.reference.channel == ia):
             row.verdict = "excluded"
             continue
-        row.a = metrics_for(cap_a.channel(idx), ca, ra.reference.time if ra.reference else cap_a.begin,
-                            span, s.glitch_s)
-        row.b = metrics_for(cap_b.channel(idx), cb, rb.reference.time if rb.reference else cap_b.begin,
-                            span, s.glitch_s)
+        row.a = metrics_for(cap_a.channel(ia), ca, t_ref_a, span, s.glitch_s)
+        row.b = metrics_for(cap_b.channel(ib), cb, t_ref_b, span, s.glitch_s)
         _compare_row(row, tol, res)
-    if renamed:
-        notes.append("Channels are matched by number; these have different names: " + "; ".join(renamed))
 
     summary = {v: sum(1 for r in rows if r.verdict == v) for v in K.verdicts}
     return Comparison(
         file_a=str(cap_a.path), file_b=str(cap_b.path),
         reference_a=asdict(ra.reference) if ra.reference else None,
-        reference_b=asdict(rb.reference) if rb.reference else None,
-        span_s=span, resolution_s=res, tolerance=tol, settings=s, rows=rows,
+        reference_b=asdict(rb.reference) if rb.reference and not ref_problem else None,
+        span_s=span, resolution_s=res, tolerance=tol, settings=s, match=match, rows=rows,
         summary=summary, notes=notes + ra.notes + [n for n in rb.notes if n not in ra.notes],
         result_a=ra, result_b=rb)

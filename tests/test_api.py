@@ -98,3 +98,15 @@ def test_compare_and_export(tmp_path):
     out = tmp_path / "cmp.xlsx"
     e = client.post("/api/export/compare", json={**body, "unit": "µs", "path": str(out)})
     assert e.status_code == 200, e.text and out.exists()
+
+
+def test_compare_match_by_name_over_http():
+    ids = []
+    for name in ("power_up_sequence.csv", "power_up_new_fw_rewired.csv"):
+        f = client.post("/api/files", json={"paths": [str(FIX / name)]}).json()["added"][0]
+        ids.append(_wait_ready(f["id"])["id"])
+    body = {"a_id": ids[0], "b_id": ids[1], "settings": {"ref_channel": 0}, "match": "name"}
+    c = client.post("/api/compare", json=body).json()
+    assert c["match"] == "name" and c["summary"]["critical"] == 2 and c["summary"]["same"] == 3
+    bad = client.post("/api/compare", json={**body, "match": "colour"})
+    assert bad.status_code == 422 and "channel matching" in bad.json()["detail"]
