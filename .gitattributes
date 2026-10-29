@@ -1,0 +1,4 @@
+# Windows batch files must have CRLF line endings: with LF only, cmd.exe can
+# fail to find GOTO labels.  Keep them CRLF in the repo and in every checkout.
+*.bat text eol=crlf
+*.cmd text eol=crlf

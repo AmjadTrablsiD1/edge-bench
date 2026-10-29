@@ -28,7 +28,19 @@ If Logic 2 is not found
   App tab -> "Choose Logic 2..." and pick Logic.exe
   (normally C:\Program Files\Logic\Logic.exe).
 
+You do NOT need Node.js
+  This zip contains the built user interface. Node.js is only needed when
+  running from the source folder (git clone); run-edge-bench.bat then builds
+  the interface itself on the first start.
+
+If it does not start
+  run-edge-bench.bat checks the app in its own window before starting it.
+  If something is wrong, that window stays open and says what - send a
+  photo of it. Logs are in
+  %USERPROFILE%\.local\state\edge-bench\logs   (crash.log, edge-bench.log)
+  To start completely fresh: delete the .venv folder next to this file.
+
 Status
-  The Windows launcher and these scripts were written and checked on a Mac
-  but have NOT yet been run on Windows. Problems: see the log in
-  %USERPROFILE%\.local\state\edge-bench\logs
+  Version 0.1.1 fixes the first Windows 11 attempt (0.1.0 crashed invisibly
+  at start-up: Windows reads text files as cp1252). Built and checked on a
+  Mac; the Windows run itself is still to be confirmed.

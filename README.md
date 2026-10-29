@@ -116,7 +116,12 @@ column / repeated cycles": [ARCHITECTURE.md](ARCHITECTURE.md). Plan:
 
 ## Limitations
 
-- **Windows: written, packaged and checked on a Mac, never run on Windows.**
+- **Windows:** the first Windows 11 run (0.1.0) crashed invisibly at
+  start-up, because Windows reads text files as cp1252 by default. 0.1.1 fixes it,
+  and `tests/test_windows_readiness.py` now runs the app with Python's
+  implicit-encoding warning as an error. A start-up failure now shows a
+  message box and `crash.log`. A successful Windows run is still to be
+  confirmed. Beyond that:
   The `.bat` files, Explorer "Show in folder", the `Logic.exe` auto-detection
   and the offline wheel install all still need a first run on a real PC. The
   wheel sets were verified to resolve for CPython 3.12 and 3.13 / win_amd64.

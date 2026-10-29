@@ -1,11 +1,15 @@
 @echo off
 REM Edge Bench on Windows -- double-click to start.
-REM WRITTEN ON macOS, NOT YET RUN ON WINDOWS.  First run creates .venv and
-REM installs the packages (from .\wheels when present: no internet needed).
+REM First run creates .venv and installs the packages (from .\wheels when
+REM present: no internet needed).  Every run checks the app in this console
+REM first, so a problem is shown here instead of the app silently not opening.
 setlocal
 cd /d "%~dp0"
+REM Python on Windows reads files as cp1252 unless told otherwise.
+set "PYTHONUTF8=1"
+title Edge Bench
 
-if exist ".venv\Scripts\pythonw.exe" goto run
+if exist ".venv\Scripts\pythonw.exe" goto ui
 
 echo Edge Bench: first start, setting up Python packages...
 set "PY="
@@ -25,12 +29,20 @@ if exist "wheels\%TAG%" (
   ".venv\Scripts\python.exe" -m pip install -r requirements.txt || goto failed
 )
 
-:run
-if not exist "ui\dist\index.html" (
-  echo The user interface is missing ^(ui\dist^). Use the release zip, or build it: cd ui ^&^& npm install ^&^& npm run build
-  pause
-  exit /b 1
-)
+:ui
+if exist "ui\dist\index.html" goto check
+REM Running from the source folder (git clone): build the UI once if Node is here.
+where npm >nul 2>nul || goto noui
+echo Building the user interface (first start from the source folder)...
+pushd ui
+call npm install --no-audit --no-fund || (popd & goto noui)
+call npm run build || (popd & goto noui)
+popd
+if not exist "ui\dist\index.html" goto noui
+
+:check
+".venv\Scripts\python.exe" main.py --check
+if errorlevel 1 goto checkfailed
 start "" ".venv\Scripts\pythonw.exe" main.py
 exit /b 0
 
@@ -39,6 +51,21 @@ echo.
 echo Python 3.12 or 3.13 was not found.
 echo Install it from https://www.python.org/downloads/windows/  (the default options are fine),
 echo then double-click this file again.
+pause
+exit /b 1
+
+:noui
+echo.
+echo The user interface (ui\dist) is missing and could not be built.
+echo Use the release zip EdgeBench-...-windows.zip (it contains the built UI),
+echo or install Node.js from https://nodejs.org and run this file again.
+pause
+exit /b 1
+
+:checkfailed
+echo.
+echo Edge Bench could not start -- the message above says why.
+echo Details are also in %USERPROFILE%\.local\state\edge-bench\logs\crash.log
 pause
 exit /b 1
 

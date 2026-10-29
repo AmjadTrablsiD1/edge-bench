@@ -32,7 +32,8 @@ class _Node(dict):
         return value
 
 
-C = _Node.wrap(json.loads(_FILE.read_text()))
+# encoding is explicit: Windows reads text as cp1252 by default, and this file holds µ, Δ, ⏱
+C = _Node.wrap(json.loads(_FILE.read_text(encoding="utf-8")))
 
 
 def path(key: str) -> Path:

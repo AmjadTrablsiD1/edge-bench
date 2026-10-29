@@ -40,18 +40,18 @@ def _expand(p: str) -> Path:
 
 def configured_path() -> str | None:
     try:
-        return json.loads(SETTINGS.read_text()).get("logic2_path") or None
+        return json.loads(SETTINGS.read_text(encoding="utf-8")).get("logic2_path") or None
     except (OSError, ValueError):
         return None
 
 
 def save_path(p: str | None) -> None:
     try:
-        data = json.loads(SETTINGS.read_text())
+        data = json.loads(SETTINGS.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
     data["logic2_path"] = p or None
-    SETTINGS.write_text(json.dumps(data, indent=2))
+    SETTINGS.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def find_executable() -> Path | None:
@@ -102,7 +102,10 @@ class Logic2:
 
     def _connect(self, port: int, timeout: float):
         from saleae import automation
-        return automation.Manager.connect(port=port, connect_timeout_seconds=timeout)
+        # Never through a proxy: grpc honours http(s)_proxy, which work PCs often set,
+        # and a corporate proxy cannot reach Logic 2 on 127.0.0.1.
+        return automation.Manager.connect(port=port, connect_timeout_seconds=timeout,
+                                          grpc_channel_arguments=[("grpc.enable_http_proxy", 0)])
 
     def _ensure(self):
         if self._mgr is not None:

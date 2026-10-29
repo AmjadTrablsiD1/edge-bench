@@ -47,7 +47,7 @@ def slot(src: Path):
     tmp.mkdir(parents=True)
     try:
         yield tmp
-        (tmp / _MARK).write_text(json.dumps({"source": str(src), "at": time.time()}))
+        (tmp / _MARK).write_text(json.dumps({"source": str(src), "at": time.time()}), encoding="utf-8")
         shutil.rmtree(final, ignore_errors=True)
         tmp.rename(final)
     finally:

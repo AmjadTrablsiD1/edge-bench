@@ -3,7 +3,7 @@
   "app": {
     "id": "edge-bench",
     "name": "Edge Bench",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "icon": "⏱",
     "tagline": "Saleae edge timing — reference edge to every channel, out to Excel"
   },

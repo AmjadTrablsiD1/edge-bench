@@ -110,6 +110,10 @@ Inside `app/`:
 
 ## Known sharp edges
 
+- **Always pass `encoding="utf-8"`** to every text read/write/subprocess. Windows reads text as cp1252 by default and constants.json holds µ, Δ, ⏱ — 0.1.0 died on its first line on Windows 11, invisibly under pythonw. `tests/test_windows_readiness.py` fails the build if any app code relies on the default.
+- Local HTTP/gRPC must bypass proxies (`ProxyHandler({})`, `grpc.enable_http_proxy=0`): work PCs set proxies that cannot reach 127.0.0.1.
+- `.bat` files stay CRLF (`.gitattributes`); cmd.exe can miss GOTO labels in LF files.
+
 - Compare rows are not unique by channel number once channels are matched by name (B's D0 can sit beside A's D0). The UI keys rows with `rowId()` (A's number, or -(B's number + 1)); never key them by `index` alone.
 
 - Compare: "time high" is only compared on channels with >= `duty_min_edges` edges. On a single transition it restates Δt, and before this rule a shifted edge was flagged twice, so raising the delay tolerance could never clear it.

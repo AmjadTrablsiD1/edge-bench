@@ -7,9 +7,11 @@ opens the operating system's own dialog.  tkinter must own the main thread
 from __future__ import annotations
 
 import json
+import os
 import platform
 import subprocess
 import sys
+from pathlib import Path
 
 from app.constants import C
 
@@ -43,11 +45,15 @@ class DialogError(RuntimeError):
 def ask(kind: str, title: str = C.files.dialog_title, initial: str | None = None,
         name: str | None = None) -> list[str]:
     """kind: files | folder | save | exe.  Returns [] when the user cancels."""
-    exe = sys.executable              # pythonw.exe on Windows is fine for a GUI child
+    exe = sys.executable
+    if platform.system() == "Windows" and exe.lower().endswith("pythonw.exe"):
+        console = exe[:-len("pythonw.exe")] + "python.exe"   # reliable stdout pipe; no window
+        exe = console if Path(console).exists() else exe
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if platform.system() == "Windows" else 0
     arg = json.dumps([kind, title, initial, C.files.dialog_filetypes, name])
     try:
         out = subprocess.run([exe, "-c", _SCRIPT, arg], capture_output=True, text=True,
+                             encoding="utf-8", env={**os.environ, "PYTHONUTF8": "1"},
                              timeout=C.files.dialog_timeout_s, creationflags=flags)
     except subprocess.TimeoutExpired as exc:
         raise DialogError("The file dialog was left open too long.") from exc

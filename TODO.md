@@ -12,9 +12,10 @@
 - [x] 2026-10-24 Fixed: install.sh's `--exclude dist` also dropped `ui/dist` (installed app showed {"detail":"Not Found"}); a missing UI now says so
 - [x] 2026-10-24 **Compare A ↔ B**: same settings on two captures, per-channel verdict (same / changed / critical) with reasons, A/B overlay view, comparison workbook. Tested on a planted "new firmware" fixture (5 differences, all found), naive cross-checks for the span metrics, 14 new pytest + 6 new Playwright tests
 - [x] 2026-10-24 Compare: **match channels by name** (case/space-insensitive; reference and exclusions follow the name; duplicates paired in channel order; `D1 ↔ D3` labels). Tested on a rewired fixture: by name reproduces the original verdicts exactly
+- [x] 2026-10-29 **Windows 11 first run failed** (0.1.0): cp1252 decode of constants.json at import, hidden by pythonw. 0.1.1: explicit UTF-8 everywhere, PYTHONUTF8=1 in the launcher, `main.py --check` run visibly before every start, crash → message box + crash.log, proxies bypassed for local HTTP/gRPC, CRLF .bat + .gitattributes, UI auto-build from a source checkout. Guarded by tests/test_windows_readiness.py (mutation-checked)
 
 ## Doing
-- [ ] First run on a real Windows work PC (you)
+- [ ] Second Windows 11 run with 0.1.1 (you) — if it fails, the launcher window / crash.log now says why
 
 ## Next
 1. **Repeated cycles with statistics.** Every reference edge is a cycle, with min / mean / max / σ per channel and a *Cycles* sheet. This is the most likely follow-up; `find_edge` already supports it.
