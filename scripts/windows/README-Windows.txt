@@ -39,8 +39,12 @@ If it does not start
   photo of it. Logs are in
   %USERPROFILE%\.local\state\edge-bench\logs   (crash.log, edge-bench.log)
   To start completely fresh: delete the .venv folder next to this file.
+  If the PC gets slow: Task Manager -> end "pythonw.exe" and "Logic".
 
 Status
-  Version 0.1.1 fixes the first Windows 11 attempt (0.1.0 crashed invisibly
-  at start-up: Windows reads text files as cp1252). Built and checked on a
-  Mac; the Windows run itself is still to be confirmed.
+  0.1.2: Edge Bench can no longer take the PC down. Only one copy runs at a
+  time, it stops itself before using half of the RAM, and the Logic 2 it
+  starts in the background is always closed with it. The launcher window
+  shows the app's address for a few seconds.
+  If a capture does not open, the red text under it in the list says why.
+  Please send that text, plus edge-bench.log from the logs folder above.

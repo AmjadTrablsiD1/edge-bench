@@ -44,6 +44,10 @@ if not exist "ui\dist\index.html" goto noui
 ".venv\Scripts\python.exe" main.py --check
 if errorlevel 1 goto checkfailed
 start "" ".venv\Scripts\pythonw.exe" main.py
+REM Wait here until it answers and show its address: if the browser does not
+REM open, the address is on screen; if it never answers, this window stays.
+".venv\Scripts\python.exe" main.py --wait || goto waitfailed
+timeout /t 8 >nul
 exit /b 0
 
 :nopython
@@ -66,6 +70,12 @@ exit /b 1
 echo.
 echo Edge Bench could not start -- the message above says why.
 echo Details are also in %USERPROFILE%\.local\state\edge-bench\logs\crash.log
+pause
+exit /b 1
+
+:waitfailed
+echo.
+echo Edge Bench was started but did not answer. The files named above say why.
 pause
 exit /b 1
 

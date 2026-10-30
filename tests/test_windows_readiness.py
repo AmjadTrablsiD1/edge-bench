@@ -31,7 +31,7 @@ sys.path.insert(0, sys.argv[1])
 fix, tmp = Path(sys.argv[2]), Path(tempfile.mkdtemp())
 
 import main                                   # what the launcher imports
-from app import cache, compare, excel, logic2, measure
+from app import cache, compare, excel, guard, logic2, measure
 from app.readers import csv_digital
 import server.api                             # noqa: F401
 
@@ -47,6 +47,8 @@ with cache.slot(fix / "power_up_sequence.csv") as d:
 logic2.SETTINGS = tmp / "settings.json"       # Logic 2 path setting round trip
 logic2.save_path(r"C:\Program Files\Logic\Logic.exe")
 assert logic2.configured_path().endswith("Logic.exe")
+main.single_instance(tmp / "instance.lock")
+guard.memory()
 print("OK")
 """
 

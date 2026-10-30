@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import os
 import platform
 import subprocess
 import threading
@@ -42,6 +43,7 @@ class Entry:
     capture: Capture | None = None
     added: float = field(default_factory=time.time)
     load_s: float | None = None
+    cancelled: bool = False          # removed while loading: the loader stops at its next step
 
     def public(self) -> dict:
         d = {"id": self.id, "path": str(self.path), "name": self.path.name, "kind": self.kind,
@@ -64,6 +66,16 @@ class State:
 S = State()
 
 
+class Cancelled(Exception):
+    pass
+
+
+def busy_text() -> str:
+    """What the app is doing, for the memory guard's message."""
+    names = [e.path.name for e in list(S.entries.values()) if e.status == "loading"]
+    return f" while loading {', '.join(names)}" if names else ""
+
+
 @asynccontextmanager
 async def lifespan(_app):
     yield
@@ -84,7 +96,8 @@ async def _unhandled(_req, exc: Exception):
 
 @api.get("/api/whoami")
 def whoami():
-    return {"token": C.server.whoami_token, "name": C.app.name, "version": C.app.version}
+    return {"token": C.server.whoami_token, "name": C.app.name, "version": C.app.version,
+            "pid": os.getpid()}
 
 
 @api.get("/api/status")
@@ -97,12 +110,22 @@ def status():
 # ------------------------------------------------------------------- files
 
 def _load(entry: Entry) -> None:
+    if entry.cancelled:
+        return
     entry.status, entry.step = "loading", "Reading"
     t = time.perf_counter()
+
+    def progress(msg: str) -> None:
+        if entry.cancelled:
+            raise Cancelled
+        entry.step = msg
+
     try:
-        entry.capture = readers.load(entry.path, logic2=S.logic2,
-                                     progress=lambda m: setattr(entry, "step", m))
+        entry.capture = readers.load(entry.path, logic2=S.logic2, progress=progress)
         entry.status, entry.step = "ready", ""
+    except Cancelled:
+        log.info("load cancelled: %s", entry.path)
+        entry.capture = None
     except Exception as exc:                              # shown to the user, logged in full
         log.exception("load failed: %s", entry.path)
         entry.status, entry.error, entry.step = "error", str(exc), ""
@@ -172,13 +195,17 @@ def list_files():
 @api.delete("/api/files/{fid}")
 def remove_file(fid: int):
     with S.lock:
-        S.entries.pop(fid, None)
+        e = S.entries.pop(fid, None)
+    if e is not None:
+        e.cancelled = True
     return {"ok": True}
 
 
 @api.post("/api/files/{fid}/retry")
 def retry(fid: int):
     e = _entry(fid, need_ready=False)
+    if e.status in ("queued", "loading"):
+        raise HTTPException(409, f"{e.path.name} is still loading; Retry is for a load that failed.")
     e.status, e.error, e.capture = "queued", None, None
     S.pool.submit(_load, e)
     return e.public()

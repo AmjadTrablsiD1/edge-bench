@@ -74,6 +74,59 @@ def _port_open(port: int) -> bool:
         return s.connect_ex((C.server.host, port)) == 0
 
 
+def _job_for(proc: subprocess.Popen):
+    """Windows: put Logic 2 in a job that dies with its handle (and with us).
+
+    Logic.exe is Electron: the main process starts GPU, renderer and helper
+    processes.  terminate() ends only the main one, so without a job every
+    failed start or quit could leave a headless Logic 2 behind, holding memory.
+    Returns None elsewhere or if the job cannot be made (then only the main
+    process is stopped, as before).
+    """
+    if platform.system() != "Windows":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class BASIC(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class EXTENDED(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", BASIC), ("IoInfo", ctypes.c_uint64 * 6),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        job = k32.CreateJobObjectW(None, None)
+        if not job:
+            raise OSError(ctypes.get_last_error(), "CreateJobObject")
+        info = EXTENDED()
+        info.BasicLimitInformation.LimitFlags = 0x2000          # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not (k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))   # extended limits
+                and k32.AssignProcessToJobObject(job, int(proc._handle))):
+            err = ctypes.get_last_error()
+            k32.CloseHandle(job)
+            raise OSError(err, "job setup")
+        return job
+    except Exception as exc:
+        log.warning("Logic 2 job object not set up (%s); only its main process will be stopped", exc)
+        return None
+
+
+def _close_job(job) -> None:
+    if job:
+        import ctypes
+        ctypes.WinDLL("kernel32").CloseHandle(job)      # kills every process still in the job
+
+
 def _free_port() -> int:
     for port in range(C.logic2.own_port_first, C.logic2.own_port_first + C.logic2.own_port_tries):
         if not _port_open(port):
@@ -87,6 +140,7 @@ class Logic2:
     def __init__(self) -> None:
         self._mgr = None
         self._proc: subprocess.Popen | None = None
+        self._job = None
         self._port: int | None = None
         self._lock = threading.Lock()
         self.version: str | None = None
@@ -136,11 +190,14 @@ class Logic2:
             self._proc = subprocess.Popen([str(exe), C.logic2.cli_args[0], C.logic2.cli_args[1], str(port)],
                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                           creationflags=flags)
+            self._job = _job_for(self._proc)
             deadline = time.time() + C.logic2.connect_timeout_s
             while time.time() < deadline and not _port_open(port):
-                if self._proc.poll() is not None:
+                code = self._proc.poll()
+                if code is not None:
+                    self._drop()              # its helper processes may still be running
                     raise Logic2Error(
-                        f"Logic 2 exited straight away (code {self._proc.returncode}). If another "
+                        f"Logic 2 exited straight away (code {code}). If another "
                         "Logic 2 window is open, enable its automation server (Preferences → "
                         "Automation) or close it, then try again.")
                 time.sleep(C.logic2.export_poll_s)
@@ -166,7 +223,8 @@ class Logic2:
                 self._proc.wait(10)
             except subprocess.TimeoutExpired:
                 self._proc.kill()
-        self._proc, self._port, self.mode = None, None, "idle"
+        _close_job(self._job)                 # and Logic 2's helper processes
+        self._proc, self._job, self._port, self.mode = None, None, None, "idle"
 
     def close(self) -> None:
         with self._lock:

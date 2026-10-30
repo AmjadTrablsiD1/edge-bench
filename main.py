@@ -8,8 +8,13 @@
     console, so a crash at start-up must become a message box and a log file.
     (The first Windows run died invisibly on a cp1252 decode of constants.json.)
 
+  * one instance per user: a second start opens the first one (even while it
+    is busy) and never starts a second server next to it,
+  * a memory guard (app/guard.py) stops the app before it can take the PC down.
+
   python main.py            run (opens the browser)
   python main.py --check    import everything, check the UI is built, exit 0/1
+  python main.py --wait     wait for the running app and print its address (launcher)
 """
 from __future__ import annotations
 
@@ -63,6 +68,52 @@ def probe(port: int, token: str, host: str, timeout: float = 0.4) -> bool:
         return False
 
 
+def single_instance(lock_path: Path):
+    """Hold an OS lock for this process's life; None if another instance has it.
+
+    The OS drops the lock when the process ends, however it ends, so a crash
+    never leaves a stale lock behind (a port file alone cannot tell "busy" from
+    "dead": a busy first instance once got a second one started next to it).
+    """
+    f = open(lock_path, "a+b")
+    try:
+        f.seek(0)
+        if platform.system() == "Windows":
+            import msvcrt
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
+def _port_in(port_file: Path) -> int | None:
+    try:
+        return int(port_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def wait_ready() -> int:
+    """The Windows launcher runs this after starting the window-less app."""
+    from app.constants import C, path
+    port_file = path("state_dir") / "port"
+    deadline = time.time() + C.server.startup_timeout_s
+    while time.time() < deadline:
+        port = _port_in(port_file)
+        if port and probe(port, C.server.whoami_token, C.server.host, timeout=1):
+            print(f"{C.app.name} is running: http://{C.server.host}:{port}/")
+            print("If no browser tab opened, paste that address into your browser.")
+            return 0
+        time.sleep(C.server.probe_interval_s)
+    print(f"{C.app.name} did not answer within {C.server.startup_timeout_s} s.")
+    print(f"Look in {FALLBACK_LOG} (crash.log, {C.app.id}.log).")
+    return 1
+
+
 def check() -> int:
     """Everything a start needs, without starting.  Run by the Windows launcher."""
     from app.constants import C
@@ -83,12 +134,9 @@ def run() -> int:
 
     port_file = path("state_dir") / "port"
 
-    def already_running() -> int | None:
-        try:
-            port = int(port_file.read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            return None
-        return port if probe(port, C.server.whoami_token, C.server.host) else None
+    def already_running(timeout: float = 0.4) -> int | None:
+        port = _port_in(port_file)
+        return port if port and probe(port, C.server.whoami_token, C.server.host, timeout) else None
 
     def open_when_ready(port: int) -> None:
         deadline = time.time() + C.server.startup_timeout_s
@@ -110,7 +158,17 @@ def run() -> int:
 
     # An explicit --port means "serve here" (dev and the e2e suite), never "reuse".
     pinned = "--port" in sys.argv
-    running = None if pinned else already_running()
+    lock = None if pinned else single_instance(path("state_dir") / C.server.lock_file)
+    if not pinned and lock is None:
+        # Another Edge Bench owns this user's session, perhaps busy: use it, never start a second.
+        running = already_running(C.server.busy_probe_timeout_s)
+        if running is None:
+            fatal(f"{C.app.name} is already running but did not answer within "
+                  f"{C.server.busy_probe_timeout_s} s - it may be busy loading a large file. Wait a "
+                  "minute and start it again; to stop it, end pythonw.exe in Task Manager.")
+            return 1
+    else:
+        running = None if pinned else already_running()
     if running is not None:
         print(f"{C.app.name} is already running on port {running} - opening it.")
         if "--no-browser" not in sys.argv:
@@ -118,7 +176,9 @@ def run() -> int:
         return 0
 
     import uvicorn
-    from server.api import api
+    from app import guard
+    from server.api import api, busy_text
+    guard.start(busy_text)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -156,7 +216,9 @@ def main() -> int:
         sys.stdout = sys.stdout or sink
         sys.stderr = sys.stderr or sink
     try:
-        return check() if "--check" in sys.argv else run()
+        if "--check" in sys.argv:
+            return check()
+        return wait_ready() if "--wait" in sys.argv else run()
     except SystemExit:
         raise
     except BaseException:

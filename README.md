@@ -116,12 +116,13 @@ column / repeated cycles": [ARCHITECTURE.md](ARCHITECTURE.md). Plan:
 
 ## Limitations
 
-- **Windows:** the first Windows 11 run (0.1.0) crashed invisibly at
-  start-up, because Windows reads text files as cp1252 by default. 0.1.1 fixes it,
-  and `tests/test_windows_readiness.py` now runs the app with Python's
-  implicit-encoding warning as an error. A start-up failure now shows a
-  message box and `crash.log`. A successful Windows run is still to be
-  confirmed. Beyond that:
+- **Windows:** 0.1.0 crashed invisibly at start-up (cp1252); 0.1.1 started,
+  but loading a capture failed, and a second attempt took a 64 GB PC to
+  full RAM and 99 % CPU. 0.1.2: memory-bounded CSV reader, one instance
+  per user, a memory guard, Logic 2's whole process tree closed on exit, and
+  the launcher shows the app's address. The cause of the `.sal` and
+  binary load failures there is **not yet known** (it needs the error text and
+  `edge-bench.log`). Beyond that:
   The `.bat` files, Explorer "Show in folder", the `Logic.exe` auto-detection
   and the offline wheel install all still need a first run on a real PC. The
   wheel sets were verified to resolve for CPython 3.12 and 3.13 / win_amd64.

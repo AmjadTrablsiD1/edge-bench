@@ -113,6 +113,11 @@ Inside `app/`:
 - **Always pass `encoding="utf-8"`** to every text read/write/subprocess. Windows reads text as cp1252 by default and constants.json holds µ, Δ, ⏱ — 0.1.0 died on its first line on Windows 11, invisibly under pythonw. `tests/test_windows_readiness.py` fails the build if any app code relies on the default.
 - Local HTTP/gRPC must bypass proxies (`ProxyHandler({})`, `grpc.enable_http_proxy=0`): work PCs set proxies that cannot reach 127.0.0.1.
 - `.bat` files stay CRLF (`.gitattributes`); cmd.exe can miss GOTO labels in LF files.
+- **Never read a capture into Python objects.** The first CSV reader used `pd.read_csv(dtype=str)`: about 5.5x the file size in RAM and 50 s per 250 MB. On Windows 11 a large work file took a 64 GB PC to 100 % RAM / 99 % CPU. The reader now goes chunk by chunk and keeps only edge times (3.2 s, 233 MB peak for the same file). `tests/test_safety.py` measures the peak against the file size.
+- **One instance per user**: an OS file lock (`state_dir/instance.lock`, released by the OS however the process ends). A port file alone cannot tell "busy" from "dead", and a busy first instance once got a second one started beside it. A second start opens the first, or says it is busy; it never serves.
+- **Memory guard** (`app/guard.py`): above `guard.max_private_frac` of physical RAM in *private* memory (memory-mapped captures do not count), the app writes crash.log, shows why and exits. Windows and Linux only.
+- **Logic 2 is a process tree** (Electron). On Windows it runs in a job object that is closed on drop/exit, so no headless Logic 2 is left holding memory. `terminate()` alone stops only the main process.
+- Retry is refused while a capture is loading; removing a loading capture cancels it at the reader's next progress step.
 
 - Compare rows are not unique by channel number once channels are matched by name (B's D0 can sit beside A's D0). The UI keys rows with `rowId()` (A's number, or -(B's number + 1)); never key them by `index` alone.
 
