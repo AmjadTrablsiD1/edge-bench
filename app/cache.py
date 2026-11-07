@@ -52,23 +52,29 @@ def slot(src: Path):
         tmp.rename(final)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    evict()
+    evict(keep=final)
 
 
 def size_bytes() -> int:
     return sum(p.stat().st_size for p in root().rglob("*") if p.is_file())
 
 
-def evict(max_bytes: float | None = None) -> int:
-    """Drop least-recently-used entries until the cache fits.  Returns entries removed."""
+def evict(max_bytes: float | None = None, keep: Path | None = None) -> int:
+    """Drop least-recently-used entries until the cache fits.  Returns entries removed.
+
+    `keep` (the export just made) is never dropped: an export bigger than the
+    whole cache limit used to evict itself, and the capture then "exported but
+    would not open".
+    """
     limit = C.cache.max_gb * 1e9 if max_bytes is None else max_bytes
-    entries = []
+    entries, total = [], 0
     for d in root().iterdir():
         mark = d / _MARK
         if d.is_dir() and mark.is_file():
             size = sum(p.stat().st_size for p in d.rglob("*") if p.is_file())
-            entries.append((mark.stat().st_mtime, size, d))
-    total = sum(e[1] for e in entries)
+            total += size                       # `keep` counts towards the limit ...
+            if d != keep:                       # ... but is never the one removed
+                entries.append((mark.stat().st_mtime, size, d))
     removed = 0
     for _, size, d in sorted(entries):
         if total <= limit:
@@ -77,8 +83,3 @@ def evict(max_bytes: float | None = None) -> int:
         total -= size
         removed += 1
     return removed
-
-
-def clear() -> None:
-    for d in root().iterdir():
-        shutil.rmtree(d, ignore_errors=True) if d.is_dir() else d.unlink(missing_ok=True)

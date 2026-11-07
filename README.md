@@ -114,6 +114,27 @@ plus `cd ui && npm run dev`. Layers, data flow, and "how to add a format / a
 column / repeated cycles": [ARCHITECTURE.md](ARCHITECTURE.md). Plan:
 [TODO.md](TODO.md).
 
+## Large captures: why a .sal can be small and its export huge
+
+Logic 2 stores edges compactly: each one as a short difference from the
+previous edge, in a zip (about 3.5 bytes per edge on simulated data, and much
+less for a regular clock). It draws the screen from summaries and decodes only
+what you look at. The binary export, which is the only way the Automation API
+hands edges out, writes **8 bytes per edge** for the *whole* channel. There is
+no time-range option.
+
+So a channel with billions of edges gives an export of tens of GB, even when
+the `.sal` is small. The usual causes are an **unconnected (floating) input**
+on a real device (noise toggles it millions of times per second) and a fast
+clock over a long capture. Turn unused channels off in Logic 2 before
+capturing.
+
+Edge Bench then memory-maps the export and only reads the edges it needs, so
+the size costs disk space, not RAM. Since 0.1.3 the export is watched: its
+size is shown while it is written, it stops before the disk fills, removing
+the capture cancels it, and an error names the busiest channels. On Windows,
+the Logic 2 that Edge Bench starts may use at most 60 % of the RAM.
+
 ## Limitations
 
 - **Windows:** 0.1.0 crashed invisibly at start-up (cp1252); 0.1.1 started,

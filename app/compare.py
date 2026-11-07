@@ -121,25 +121,35 @@ class Comparison:
 # ------------------------------------------------------------------ metrics
 
 def span_activity(ch: Channel, t0: float, t1: float) -> tuple[int, float | None, float | None]:
-    """(edges in [t0, t1], fraction of covered time high, shortest pulse) -- vectorised."""
+    """(edges in [t0, t1], fraction of covered time high, shortest pulse).
+
+    Walks the span in chunks of K.span_chunk_edges, so memory stays flat however
+    many edges the span holds (one array per edge would be ~32 GB for 10^9 edges).
+    """
     count, high, covered = 0, 0.0, 0.0
     shortest: float | None = None
+    step = int(K.span_chunk_edges)
     for seg in ch.segments:
         a, b = max(t0, seg.begin), min(t1, seg.end)
         if a >= b:
             continue
         i0 = int(np.searchsorted(seg.times, a, side="left"))
         i1 = int(np.searchsorted(seg.times, b, side="right"))
-        e = np.asarray(seg.times[i0:i1], dtype=float)
-        count += e.size
-        bounds = np.concatenate(([a], e, [b]))
-        widths = np.diff(bounds)
-        levels = seg.level_after(i0 - 1) ^ (np.arange(widths.size) & 1)
-        high += float(widths[levels == 1].sum())
+        count += i1 - i0
+        prev, level, last = a, seg.level_after(i0 - 1), None     # level from `prev` on
+        for j in range(i0, i1, step):
+            e = np.asarray(seg.times[j:min(j + step, i1)], dtype=float)
+            widths = np.diff(e, prepend=prev)
+            levels = level ^ (np.arange(widths.size) & 1)
+            high += float(widths[levels == 1].sum())
+            gaps = np.diff(e, prepend=last) if last is not None else np.diff(e)
+            if gaps.size:
+                m = float(gaps.min())
+                shortest = m if shortest is None else min(shortest, m)
+            prev, last, level = float(e[-1]), float(e[-1]), level ^ (e.size & 1)
+        if level == 1:
+            high += b - prev
         covered += b - a
-        if e.size >= 2:
-            m = float(np.diff(e).min())
-            shortest = m if shortest is None else min(shortest, m)
     return count, (high / covered if covered > 0 else None), shortest
 
 

@@ -41,7 +41,17 @@ If it does not start
   To start completely fresh: delete the .venv folder next to this file.
   If the PC gets slow: Task Manager -> end "pythonw.exe" and "Logic".
 
+Big captures
+  Logic 2 keeps edges compressed; Edge Bench has to ask it for a binary
+  export, which takes 8 bytes per edge for every channel. An unconnected
+  (floating) input or a fast clock can make that tens of GB. Turn unused
+  channels off in Logic 2 before capturing. While a .sal is exported, its
+  line in the list shows how many GB have been written so far.
+
 Status
+  0.1.3: a large export no longer disappears before it is opened, Compare
+  no longer loads whole channels into RAM, and the export stops before the
+  disk is full.
   0.1.2: Edge Bench can no longer take the PC down. Only one copy runs at a
   time, it stops itself before using half of the RAM, and the Logic 2 it
   starts in the background is always closed with it. The launcher window

@@ -15,6 +15,7 @@ from openpyxl import load_workbook
 
 from app import excel
 from app.capture import Channel, Segment
+from app.constants import C
 from app.compare import Tolerance, compare, span_activity
 from app.measure import Settings
 from app.readers import binary, csv_digital
@@ -102,9 +103,11 @@ def test_missing_reference_is_reported(pair):
     assert any("No reference edge in capture B" in n for n in c.notes)
 
 
+@pytest.mark.parametrize("chunk", [4_000_000, 1, 2, 7])     # chunked walk == one pass
 @pytest.mark.parametrize("seed", range(6))
-def test_span_metrics_match_naive_samples(seed):
+def test_span_metrics_match_naive_samples(seed, chunk, monkeypatch):
     """Duty = mean of the samples; edges and shortest pulse counted sample by sample."""
+    monkeypatch.setitem(C.compare, "span_chunk_edges", chunk)
     rng = np.random.default_rng(seed)
     rate = 1e6
     s = synth.random_samples(rng, 5000, p_toggle=0.03, glitch_p=0.3)

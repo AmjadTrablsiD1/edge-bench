@@ -248,3 +248,95 @@ def test_windows_job_is_only_made_on_windows():
         p.wait()
         logic2._close_job(job)
 
+
+
+# ------------------------------------------- exports bigger than expected
+
+def test_an_export_bigger_than_the_cache_limit_is_kept(tmp_path, monkeypatch):
+    """0.1.2 evicted a >20 GB export right after making it: 'exported but cannot open'."""
+    from app import cache
+    monkeypatch.setattr(cache, "root", lambda: tmp_path)
+    monkeypatch.setitem(C.cache, "max_gb", 1e-6)                   # 1 kB
+    old_src, new_src = tmp_path / "old.sal", tmp_path / "new.sal"
+    old_src.write_bytes(b"a")
+    new_src.write_bytes(b"b")
+    with cache.slot(old_src) as d:
+        (d / "digital_0.bin").write_bytes(b"0" * 600)
+    with cache.slot(new_src) as d:
+        (d / "digital_0.bin").write_bytes(b"0" * 5000)               # alone over the limit
+    assert cache.lookup(new_src) is not None
+    assert cache.lookup(old_src) is None                              # the older one made room
+
+
+def test_sal_whose_export_vanished_says_so(tmp_path, monkeypatch):
+    from app import cache
+    from app.readers import sal
+    monkeypatch.setattr(cache, "root", lambda: tmp_path)
+    monkeypatch.setattr(cache, "lookup", lambda src: None)
+
+    class FakeLogic2:
+        def export_binary(self, sal_path, out, chans, progress=None):
+            (out / "digital_0.bin").write_bytes(b"x")
+
+    with pytest.raises(RuntimeError, match="no longer in the cache"):
+        sal.load(ROOT / "tests" / "fixtures" / "sim_logic8.sal", logic2=FakeLogic2())
+
+
+def test_logic2_failure_names_the_busiest_channels(tmp_path, monkeypatch):
+    from app import cache
+    from app.readers import sal
+    monkeypatch.setattr(cache, "root", lambda: tmp_path)
+    meta = sal.read_meta(ROOT / "tests" / "fixtures" / "sim_logic8.sal")
+    assert sorted(meta.stored) == list(range(8)) and all(v > 0 for v in meta.stored.values())
+
+    class Refuses:
+        def export_binary(self, *a, **k):
+            raise logic2.Logic2Error("Logic 2 refused the export: out of memory.")
+
+    with pytest.raises(RuntimeError, match=r"out of memory\. Busiest channels in this capture: .*MB stored"):
+        sal.load(ROOT / "tests" / "fixtures" / "sim_logic8.sal", logic2=Refuses())
+
+
+class _Disk:
+    def __init__(self, free):
+        self.free = free
+
+
+def test_export_stops_when_the_disk_fills(tmp_path, monkeypatch):
+    monkeypatch.setitem(C.logic2, "watch_interval_s", 0.02)
+    free = [100e9]
+    monkeypatch.setattr(logic2.shutil, "disk_usage", lambda p: _Disk(free[0]))
+    stopped, said = [], []
+    w = logic2.ExportWatch(tmp_path, said.append, lambda: stopped.append(1))
+    (tmp_path / "digital_0.bin").write_bytes(b"0" * 2_000_000)
+    time.sleep(0.1)
+    free[0] = 1e9                                                     # below min_free_disk_gb
+    deadline = time.time() + 3
+    while not stopped and time.time() < deadline:
+        time.sleep(0.02)
+    w.close()
+    assert stopped and any("GB (100 GB free)" in m for m in said)
+    with pytest.raises(logic2.Logic2Error, match="disk is nearly full"):
+        w.check()
+    with pytest.raises(logic2.Logic2Error, match="disk is nearly full"):
+        logic2.wait_complete(tmp_path, 1, check=w.check)               # no 600 s wait
+
+
+def test_removing_a_capture_stops_its_export(tmp_path, monkeypatch):
+    monkeypatch.setitem(C.logic2, "watch_interval_s", 0.02)
+
+    def say(msg):
+        raise srv.Cancelled
+
+    stopped = []
+    w = logic2.ExportWatch(tmp_path, say, lambda: stopped.append(1))
+    w._thread.join(3)
+    assert stopped
+    with pytest.raises(srv.Cancelled):
+        w.check()
+
+
+def test_no_export_starts_on_a_full_disk(tmp_path, monkeypatch):
+    monkeypatch.setattr(logic2.shutil, "disk_usage", lambda p: _Disk(1e9))
+    with pytest.raises(logic2.Logic2Error, match="free on the disk"):
+        logic2.Logic2().export_binary(tmp_path / "x.sal", tmp_path, [0])

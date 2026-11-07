@@ -3,7 +3,7 @@
   "app": {
     "id": "edge-bench",
     "name": "Edge Bench",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "icon": "⏱",
     "tagline": "Saleae edge timing — reference edge to every channel, out to Excel"
   },
@@ -97,7 +97,10 @@
       16,
       8,
       4
-    ]
+    ],
+    "min_free_disk_gb": 5,
+    "watch_interval_s": 1.0,
+    "job_memory_frac": 0.6
   },
   "cache": {
     "max_gb": 20,
@@ -270,7 +273,8 @@
       "number",
       "name"
     ],
-    "default_match": "number"
+    "default_match": "number",
+    "span_chunk_edges": 4000000
   },
   "guard": {
     "_comment": "Edge Bench stops itself before it can take the PC down: if its own private memory passes this share of the physical RAM it writes crash.log, says why and exits. Memory-mapped capture files do not count (they are file-backed and the OS can drop them).",

@@ -27,6 +27,7 @@ class SalMeta:
     capture_start_unix_ms: float | None = None
     meta_version: int | None = None
     warnings: list[str] = field(default_factory=list)
+    stored: dict[int, int] = field(default_factory=dict)    # channel -> bytes inside the .sal
 
     def as_dict(self) -> dict:
         return {
@@ -66,6 +67,8 @@ def read_meta(path: Path) -> SalMeta:
         with zipfile.ZipFile(path) as z:
             raw = json.loads(z.read("meta.json"))
             members = z.namelist()
+            sizes = {i: info.file_size for info in z.infolist()
+                     if (i := binary.channel_index(Path(info.filename))) is not None}
     except (zipfile.BadZipFile, KeyError, json.JSONDecodeError) as exc:
         raise ValueError(f"{path.name}: not a readable Logic 2 capture ({exc})") from exc
 
@@ -87,6 +90,7 @@ def read_meta(path: Path) -> SalMeta:
     in_zip = sorted(i for m in members if (i := binary.channel_index(Path(m))) is not None)
     meta.digital = sorted(set(enabled) or set(in_zip) or set(names))
     meta.names = {i: names.get(i, f"Channel {i}") for i in meta.digital}
+    meta.stored = {i: sizes[i] for i in meta.digital if i in sizes}
 
     start = data.get("captureStartTime") or {}
     if "unixTimeMilliseconds" in start:
@@ -98,6 +102,17 @@ def read_meta(path: Path) -> SalMeta:
     return meta
 
 
+def busiest(meta: SalMeta, top: int = 3) -> str:
+    """Which channels hold the most data -- usually a floating input or a fast clock."""
+    if not meta.stored:
+        return ""
+    big = sorted(meta.stored.items(), key=lambda kv: -kv[1])[:top]
+    names = ", ".join(f"{meta.names.get(i, f'Channel {i}')} ({b / 1e6:,.0f} MB stored)" for i, b in big)
+    return (f" Busiest channels in this capture: {names}. An unconnected (floating) input or a "
+            "fast clock gives billions of edges, and the binary export holds 8 bytes per edge: "
+            "turn such channels off in Logic 2 before capturing.")
+
+
 def load(path: Path, *, logic2=None, progress=None, **_) -> Capture:
     """Export through Logic 2 (cached), then read the binary like any other."""
     from app import cache
@@ -107,9 +122,15 @@ def load(path: Path, *, logic2=None, progress=None, **_) -> Capture:
     if folder is None:
         if logic2 is None:
             raise RuntimeError("This .sal has not been exported yet and Logic 2 is not available.")
-        with cache.slot(path) as tmp:
-            logic2.export_binary(path, tmp, meta.digital or None, progress=progress)
+        try:
+            with cache.slot(path) as tmp:
+                logic2.export_binary(path, tmp, meta.digital or None, progress=progress)
+        except RuntimeError as exc:       # Logic 2 failures: say which channels are heavy
+            raise RuntimeError(f"{exc}{busiest(meta)}") from exc
         folder = cache.lookup(path)
+        if folder is None:
+            raise RuntimeError(f"Logic 2 exported {path.name}, but the export is no longer in the "
+                               f"cache ({cache.root()}).")
     cap = binary.load_folder(folder, names=meta.names, sample_rate=meta.sample_rate,
                              device=meta.device, source_path=path, source="sal")
     cap.notes.extend(meta.warnings)

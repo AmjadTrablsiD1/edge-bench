@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import platform
+import shutil
 import socket
 import subprocess
 import threading
@@ -74,8 +75,11 @@ def _port_open(port: int) -> bool:
         return s.connect_ex((C.server.host, port)) == 0
 
 
-def _job_for(proc: subprocess.Popen):
+def _job_for(proc: subprocess.Popen, memory_limit: int | None = None):
     """Windows: put Logic 2 in a job that dies with its handle (and with us).
+
+    With `memory_limit` the job may commit at most that many bytes in total, so
+    a capture too big for this PC makes Logic 2 fail instead of the PC freezing.
 
     Logic.exe is Electron: the main process starts GPU, renderer and helper
     processes.  terminate() ends only the main one, so without a job every
@@ -110,6 +114,9 @@ def _job_for(proc: subprocess.Popen):
             raise OSError(ctypes.get_last_error(), "CreateJobObject")
         info = EXTENDED()
         info.BasicLimitInformation.LimitFlags = 0x2000          # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if memory_limit:
+            info.BasicLimitInformation.LimitFlags |= 0x200      # JOB_OBJECT_LIMIT_JOB_MEMORY
+            info.JobMemoryLimit = int(memory_limit)
         if not (k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))   # extended limits
                 and k32.AssignProcessToJobObject(job, int(proc._handle))):
             err = ctypes.get_last_error()
@@ -141,6 +148,7 @@ class Logic2:
         self._mgr = None
         self._proc: subprocess.Popen | None = None
         self._job = None
+        self.memory_limit: int | None = None     # bytes Logic 2 may commit (Windows job)
         self._port: int | None = None
         self._lock = threading.Lock()
         self.version: str | None = None
@@ -190,7 +198,12 @@ class Logic2:
             self._proc = subprocess.Popen([str(exe), C.logic2.cli_args[0], C.logic2.cli_args[1], str(port)],
                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                           creationflags=flags)
-            self._job = _job_for(self._proc)
+            from app import guard
+            ram = guard.memory()
+            self.memory_limit = int(C.logic2.job_memory_frac * ram[1]) if ram else None
+            self._job = _job_for(self._proc, self.memory_limit)
+            if self._job is None:
+                self.memory_limit = None
             deadline = time.time() + C.logic2.connect_timeout_s
             while time.time() < deadline and not _port_open(port):
                 code = self._proc.poll()
@@ -231,9 +244,16 @@ class Logic2:
             self._drop()
 
     # -- export ------------------------------------------------------------
+    def _stop_own(self) -> None:
+        """End an export early.  Only a Logic 2 we started can be stopped."""
+        if self.mode == "own":
+            log.warning("Stopping our Logic 2 to end the export")
+            self._drop()
+
     def export_binary(self, sal: Path, out_dir: Path, channels: list[int] | None,
                       progress: Callable[[str], None] | None = None) -> list[Path]:
         say = progress or (lambda _m: None)
+        _check_disk(out_dir)
         with self._lock:
             say("Connecting to Logic 2")
             mgr = self._ensure()
@@ -241,7 +261,8 @@ class Logic2:
             try:
                 cap = mgr.load_capture(str(sal.resolve()))
             except Exception as exc:
-                raise Logic2Error(f"Logic 2 could not open {sal.name}: {exc}") from exc
+                raise Logic2Error(f"Logic 2 could not open {sal.name}: {exc}{self._limit_note()}") from exc
+            watch = ExportWatch(out_dir, say, self._stop_own)
             try:
                 say("Exporting edges (binary)")
                 tried = [channels] if channels else [list(range(n)) for n in C.logic2.probe_channels]
@@ -251,20 +272,95 @@ class Logic2:
                         cap.export_raw_data_binary(str(out_dir.resolve()), digital_channels=chans)
                         last = None
                         break
-                    except Exception as exc:     # wrong channel set for this device
+                    except Exception as exc:     # wrong channel set for this device -- or stopped
+                        watch.check()
                         last = exc
                 if last is not None:
-                    raise Logic2Error(f"Logic 2 refused the export: {last}") from last
+                    raise Logic2Error(f"Logic 2 refused the export: {last}{self._limit_note()}") from last
+            except BaseException:
+                watch.close()
+                raise
             finally:
                 try:
                     cap.close()
                 except Exception:
                     pass
-        say("Checking exported files")
-        return wait_complete(out_dir, len(channels) if channels else None)
+        try:
+            say("Checking exported files")
+            return wait_complete(out_dir, len(channels) if channels else None, check=watch.check)
+        finally:
+            watch.close()
+
+    def _limit_note(self) -> str:
+        if not self.memory_limit:
+            return ""
+        return (f" (Logic 2 may use at most {self.memory_limit / 2**30:.0f} GB of RAM here, so that a "
+                "capture too big for this PC cannot freeze it.)")
 
 
-def wait_complete(folder: Path, expected: int | None) -> list[Path]:
+def _check_disk(folder: Path) -> None:
+    free = shutil.disk_usage(folder).free
+    if free < C.logic2.min_free_disk_gb * 1e9:
+        raise Logic2Error(f"Only {free / 1e9:.1f} GB free on the disk of {folder}; exporting a "
+                          f"capture needs more than {C.logic2.min_free_disk_gb} GB. Free some space "
+                          "or clear the export cache (App tab).")
+
+
+def _bytes_in(folder: Path) -> int:
+    try:
+        return sum(p.stat().st_size for p in folder.iterdir() if p.is_file())
+    except OSError:
+        return 0
+
+
+class ExportWatch:
+    """Watches an export folder while Logic 2 writes it.
+
+    Shows how much is written, and stops the export when the disk is nearly
+    full or the capture was removed from the list -- a binary export holds
+    8 bytes per edge, so a busy channel can fill a disk Logic 2's own .sal
+    fitted on easily.
+    """
+
+    def __init__(self, folder: Path, say: Callable[[str], None], stop: Callable[[], None]) -> None:
+        self.folder, self.say, self.stop = folder, say, stop
+        self.reason: str | None = None
+        self.cancelled: BaseException | None = None
+        self._done = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="export-watch", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._done.wait(C.logic2.watch_interval_s):
+            written, free = _bytes_in(self.folder), shutil.disk_usage(self.folder).free
+            try:
+                self.say(f"Logic 2 is writing the export: {written / 1e9:.1f} GB "
+                         f"({free / 1e9:.0f} GB free)")
+            except Exception as exc:                 # the capture was removed: stop the export
+                self.cancelled = exc
+                self.stop()
+                return
+            if free < C.logic2.min_free_disk_gb * 1e9:
+                self.reason = (f"The disk is nearly full: the binary export had reached "
+                               f"{written / 1e9:.1f} GB with {free / 1e9:.1f} GB left on the disk "
+                               f"of {self.folder}, so it was stopped.")
+                self.stop()
+                return
+
+    def check(self) -> None:
+        """Raise why the export was stopped, if it was."""
+        if self.cancelled is not None:
+            raise self.cancelled
+        if self.reason is not None:
+            raise Logic2Error(self.reason)
+
+    def close(self) -> None:
+        self._done.set()
+        self._thread.join(C.logic2.watch_interval_s * 2)
+
+
+def wait_complete(folder: Path, expected: int | None,
+                  check: Callable[[], None] | None = None) -> list[Path]:
     """Block until every exported file is as long as its header says.
 
     Logic 2 returns from export_raw_data_binary before writing has finished
@@ -273,6 +369,8 @@ def wait_complete(folder: Path, expected: int | None) -> list[Path]:
     deadline = time.time() + C.logic2.export_complete_timeout_s
     stable, last_sizes = 0, None
     while time.time() < deadline:
+        if check is not None:
+            check()
         files = [p for _, p in binary.bin_files(folder)]
         ok = bool(files) and (expected is None or len(files) >= expected)
         if ok:

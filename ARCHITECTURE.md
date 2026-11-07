@@ -117,6 +117,9 @@ Inside `app/`:
 - **One instance per user**: an OS file lock (`state_dir/instance.lock`, released by the OS however the process ends). A port file alone cannot tell "busy" from "dead", and a busy first instance once got a second one started beside it. A second start opens the first, or says it is busy; it never serves.
 - **Memory guard** (`app/guard.py`): above `guard.max_private_frac` of physical RAM in *private* memory (memory-mapped captures do not count), the app writes crash.log, shows why and exits. Windows and Linux only.
 - **Logic 2 is a process tree** (Electron). On Windows it runs in a job object that is closed on drop/exit, so no headless Logic 2 is left holding memory. `terminate()` alone stops only the main process.
+- **The cache keeps the export it just made**, even when that alone is over `cache.max_gb` (0.1.2 evicted it and then could not open it). Older entries make room instead.
+- **No per-edge arrays over a whole span**: `compare.span_activity` walks in `span_chunk_edges` chunks. A span can hold 10^9 edges; one float64 per edge for each of `e`, `bounds`, `widths` and `levels` is about 32 GB.
+- **Exports are watched** (`logic2.ExportWatch`): GB written goes to the progress line, the export stops below `min_free_disk_gb`, and removing the capture stops it. Only a Logic 2 we started can be stopped. On Windows that Logic 2's job may commit at most `job_memory_frac` of RAM.
 - Retry is refused while a capture is loading; removing a loading capture cancels it at the reader's next progress step.
 
 - Compare rows are not unique by channel number once channels are matched by name (B's D0 can sit beside A's D0). The UI keys rows with `rowId()` (A's number, or -(B's number + 1)); never key them by `index` alone.
