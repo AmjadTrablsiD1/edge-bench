@@ -44,6 +44,9 @@ excel.write_comparison(compare.compare(a, b, s, match="name"), tmp / "c.xlsx")
 cache.root = lambda: tmp                      # export cache bookkeeping
 with cache.slot(fix / "power_up_sequence.csv") as d:
     (d / "x").write_bytes(b"0")
+from app.readers import sal                   # the direct .sal reader, no Logic 2
+s = sal.load(fix / "sim_logic8.sal", logic2=None)
+measure.run(s, measure.Settings(ref_channel=0))
 logic2.SETTINGS = tmp / "settings.json"       # Logic 2 path setting round trip
 logic2.save_path(r"C:\Program Files\Logic\Logic.exe")
 assert logic2.configured_path().endswith("Logic.exe")

@@ -385,7 +385,7 @@ export default function App() {
                 <div className="state-card">
                   <div className="spinner" aria-hidden="true" />
                   <h2>{file.step || "Waiting"}</h2>
-                  <p>{file.name}{file.kind === "sal" ? " — Logic 2 exports it once; reopening it later is instant." : ""}</p>
+                  <p>{file.name}{file.kind === "sal" ? " — unpacked once; reopening it later is instant." : ""}</p>
                 </div>
               ) : file && file.status === "error" ? (
                 <div className="state-card error">
@@ -397,7 +397,7 @@ export default function App() {
                 <div className="state-card">
                   <img src="/favicon.svg" alt="" width={52} height={52} />
                   <h2>Open a Saleae capture</h2>
-                  <p>Pick <b>.sal</b> files (Logic 2 opens them in the background), a Logic 2 <b>digital CSV</b>, or a <b>binary export</b> folder. Choose a reference edge; every other channel gets its Δt, ready for Excel.</p>
+                  <p>Pick <b>.sal</b> files (read directly, no Logic 2 needed), a Logic 2 <b>digital CSV</b>, or a <b>binary export</b> folder. Choose a reference edge; every other channel gets its Δt, ready for Excel.</p>
                   <div className="btn-row center">
                     <button className="primary-btn" onClick={() => dialogAdd("files")} disabled={busy} data-test="empty-add"><Icon name="plus" /> Add captures…</button>
                     <button className="ghost-btn" onClick={() => dialogAdd("folder")} disabled={busy}><Icon name="folder" /> Add a folder…</button>

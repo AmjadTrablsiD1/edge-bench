@@ -272,14 +272,14 @@ def test_sal_whose_export_vanished_says_so(tmp_path, monkeypatch):
     from app import cache
     from app.readers import sal
     monkeypatch.setattr(cache, "root", lambda: tmp_path)
-    monkeypatch.setattr(cache, "lookup", lambda src: None)
+    monkeypatch.setattr(cache, "lookup", lambda src, kind="export": None)
 
     class FakeLogic2:
         def export_binary(self, sal_path, out, chans, progress=None):
             (out / "digital_0.bin").write_bytes(b"x")
 
     with pytest.raises(RuntimeError, match="no longer in the cache"):
-        sal.load(ROOT / "tests" / "fixtures" / "sim_logic8.sal", logic2=FakeLogic2())
+        sal.load(ROOT / "tests" / "fixtures" / "sim_logic8.sal", logic2=FakeLogic2(), native=False)
 
 
 def test_logic2_failure_names_the_busiest_channels(tmp_path, monkeypatch):
@@ -294,7 +294,7 @@ def test_logic2_failure_names_the_busiest_channels(tmp_path, monkeypatch):
             raise logic2.Logic2Error("Logic 2 refused the export: out of memory.")
 
     with pytest.raises(RuntimeError, match=r"out of memory\. Busiest channels in this capture: .*MB stored"):
-        sal.load(ROOT / "tests" / "fixtures" / "sim_logic8.sal", logic2=Refuses())
+        sal.load(ROOT / "tests" / "fixtures" / "sim_logic8.sal", logic2=Refuses(), native=False)
 
 
 class _Disk:

@@ -3,6 +3,8 @@
 Skipped when Logic 2 is not installed.  The fixtures were captured with Logic 2's
 simulated devices, and their binary exports (made by hand in Logic 2) sit next to
 them -- so the app's own export must reproduce those files' edges exactly.
+(.sal files are read directly by default now; these tests ask for the export,
+which stays the fallback.)
 """
 from __future__ import annotations
 
@@ -35,7 +37,7 @@ def tmp_cache(tmp_path, monkeypatch):
 @pytest.mark.parametrize("sal, ref", [("sim_logic8.sal", "logic8_bin"), ("sim_pro16.sal", "pro16_bin")])
 def test_sal_export_matches_hand_export(session, tmp_cache, sal, ref):
     steps: list[str] = []
-    cap = readers.load(FIX / sal, logic2=session, progress=steps.append)
+    cap = readers.load(FIX / sal, logic2=session, progress=steps.append, native=False)
     assert "Exporting edges (binary)" in steps
     hand = binary.load(FIX / ref)
     assert [c.index for c in cap.channels] == [c.index for c in hand.channels]
@@ -46,7 +48,7 @@ def test_sal_export_matches_hand_export(session, tmp_cache, sal, ref):
 
     # Second load comes from the cache: Logic 2 is not asked again.
     steps.clear()
-    again = readers.load(FIX / sal, logic2=None)
+    again = readers.load(FIX / sal, logic2=None, native=False)
     assert steps == [] and again.channels[0].edge_count == cap.channels[0].edge_count
     r = measure.run(again, measure.Settings(ref_channel=0))
     assert r.reference is not None and r.resolution_s == pytest.approx(1 / again.sample_rate)

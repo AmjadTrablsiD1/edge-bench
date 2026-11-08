@@ -18,12 +18,14 @@
 
 - [x] 2026-11-07 **Windows 11, 0.1.2**: the .sal exported but would not open, with a RAM error. Found: the cache evicted an export bigger than its 20 GB limit right after making it; Compare's span metrics copied every edge of the span into RAM (~32 B/edge). 0.1.3: the fresh export is never evicted, Compare walks spans in 4 M-edge chunks (same results at chunk 1/2/7/4 M), the export is watched (GB written shown, stops before the disk is full, cancelled when the capture is removed), Logic 2 is memory-capped by its Windows job (60 % of RAM), errors name the busiest channels (sizes stored in the .sal). 6 new tests, the cache fix mutation-checked
 
+- [x] 2026-11-08 **Direct .sal reader** (0.2.0): Logic 2's channel format decoded from 15 recorded captures (3 simulated devices, 1–250 MS/s, trigger, trimmed), every edge on Logic 2's own exported sample, every chunk re-encodes to Logic 2's bytes (2157 chunks). Lazy times with a mark every 4096 edges: 100 M edges indexed at 9 M edges/s, measured in 12 ms, full view in 1 ms, 375 MB peak RSS (149 MB of it the mapped file). Unknown layouts fall back to the export. 34 new pytest + 2 Playwright tests; 7 planted decoder bugs all caught
+
 ## Doing
-- [ ] Windows 11 run with 0.1.3 (you): error text under the capture + edge-bench.log + Task Manager (which process held the memory: pythonw or Logic)
+- [ ] Windows 11 run with 0.2.0 on a real capture (you): does the .sal open directly, or does its Coverage note say "Read through a Logic 2 export" (and why)?: error text under the capture + edge-bench.log + Task Manager (which process held the memory: pythonw or Logic)
 - [ ] **In-place updates** (paused until 0.1.2 runs): `updater.py` stage → swap → deps → check → rollback, an Updates well in the App tab, an update folder on a share, scripts/release.sh, CHANGELOG.md
 
 ## Next
-0. **Read the .sal directly** (no export): Logic 2's own channel files are "<SALEAE>" version 4, type 100, delta-encoded edges. Reverse-engineering them, checked bit for bit against Logic 2's binary exports, would make a .sal open like it does in Logic 2: no 8 B/edge export, no Logic 2 process. It is undocumented, so a Logic 2 update could change it; the export stays as the fallback.
+0. **A real-hardware .sal in the corpus** (a long idle channel at 250–500 MS/s gives 4-byte runs, which the simulator never writes), and a Logic MSO file.
 1. **Repeated cycles with statistics.** Every reference edge is a cycle, with min / mean / max / σ per channel and a *Cycles* sheet. This is the most likely follow-up; `find_edge` already supports it.
 2. **Per-channel edge kind** (e.g. D3 rising, D5 falling) instead of one global target edge.
 3. **"Nearest edge" rule** (Δt may be negative) for channels that switch before the reference.

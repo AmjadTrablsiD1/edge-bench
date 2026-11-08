@@ -1,6 +1,7 @@
 """Exported binaries, so a .sal goes through Logic 2 once and never again.
 
-Key = (absolute path, size, mtime, key version).  A capture edited or replaced
+Key = (absolute path, size, mtime, key version, kind).  Kinds: "export" (Logic 2's
+binary export) and the direct reader's unpacked channel files.  A capture edited or replaced
 on disk gets a new key.  An entry is only valid once ``complete.json`` exists,
 which is written after every file was checked against its own header -- a
 crashed or half-finished export is never mistaken for a good one.
@@ -23,14 +24,14 @@ def root() -> Path:
     return cpath("cache_dir")
 
 
-def key(src: Path) -> str:
+def key(src: Path, kind: str = "export") -> str:
     st = src.stat()
-    ident = f"{src.resolve()}|{st.st_size}|{st.st_mtime_ns}|{C.cache.key_version}"
+    ident = f"{src.resolve()}|{st.st_size}|{st.st_mtime_ns}|{C.cache.key_version}|{kind}"
     return hashlib.sha1(ident.encode("utf-8")).hexdigest()[:20]
 
 
-def lookup(src: Path) -> Path | None:
-    d = root() / key(src)
+def lookup(src: Path, kind: str = "export") -> Path | None:
+    d = root() / key(src, kind)
     mark = d / _MARK
     if mark.is_file():
         mark.touch()                    # LRU: last use
@@ -39,9 +40,9 @@ def lookup(src: Path) -> Path | None:
 
 
 @contextmanager
-def slot(src: Path):
+def slot(src: Path, kind: str = "export"):
     """A temp folder to export into; promoted to the cache only on success."""
-    final = root() / key(src)
+    final = root() / key(src, kind)
     tmp = root() / f".{final.name}.partial"
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)

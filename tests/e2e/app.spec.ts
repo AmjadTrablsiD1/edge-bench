@@ -47,6 +47,17 @@ async function axe(page: Page) {
   expect(bad.map((v) => `${v.id}: ${v.nodes.slice(0, 3).map((n) => n.target.join(" ")).join(" | ")}`)).toEqual([]);
 }
 
+test(".sal read directly: no Logic 2, every channel measured", async ({ page }, info) => {
+  // A Logic 2 capture (Logic Pro 8, 250 MS/s) opened without Logic 2: the direct reader.
+  await openCapture(page, path.join(FIX, "sal_corpus", "logic_pro_8_250000k_0.5s.sal"));
+  await expect(page.locator(".doc .doc-meta")).toContainText("250 MS/s");
+  await expect(page.locator("[data-test=dt-1]")).not.toHaveText("");
+  await page.locator("[data-test=tab-coverage]").click();
+  await expect(page.locator(".inspector")).toContainText("Read directly from the .sal (no Logic 2 export).");
+  await page.screenshot({ path: `${SHOTS}/${info.project.name}-13-sal-direct.png` });
+  await axe(page);
+});
+
 test("empty state invites the first capture", async ({ page }, info) => {
   await page.goto("/");
   await expect(page.locator("[data-test=empty]")).toContainText("Open a Saleae capture");

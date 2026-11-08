@@ -114,7 +114,19 @@ plus `cd ui && npm run dev`. Layers, data flow, and "how to add a format / a
 column / repeated cycles": [ARCHITECTURE.md](ARCHITECTURE.md). Plan:
 [TODO.md](TODO.md).
 
-## Large captures: why a .sal can be small and its export huge
+## Large captures: a .sal is read directly
+
+Since 0.2.0, Edge Bench reads the edges straight out of the `.sal`, the way
+Logic 2 does, without Logic 2 and without an export. Each channel is unpacked
+once into the cache. That takes about 1 to 3 bytes per edge on disk (the
+binary export takes 8). From then on, only the part a measurement or the
+screen needs is decoded: a 100-million-edge channel was measured in 12 ms.
+The format is not documented by Saleae. It was decoded from Logic 2.4.48 and
+is checked against Logic 2's own exports (see ARCHITECTURE.md). A file it does
+not recognise is exported through Logic 2 as before, and the capture's notes
+say so.
+
+### Why the export route struggled
 
 Logic 2 stores edges compactly: each one as a short difference from the
 previous edge, in a zip (about 3.5 bytes per edge on simulated data, and much
@@ -129,8 +141,9 @@ on a real device (noise toggles it millions of times per second) and a fast
 clock over a long capture. Turn unused channels off in Logic 2 before
 capturing.
 
-Edge Bench then memory-maps the export and only reads the edges it needs, so
-the size costs disk space, not RAM. Since 0.1.3 the export is watched: its
+When the export route is still taken (a `.sal` the direct reader does not
+know), Edge Bench memory-maps the export and only reads the edges it needs,
+so the size costs disk space, not RAM. Since 0.1.3 the export is watched: its
 size is shown while it is written, it stops before the disk fills, removing
 the capture cancels it, and an error names the busiest channels. On Windows,
 the Logic 2 that Edge Bench starts may use at most 60 % of the RAM.
@@ -141,14 +154,16 @@ the Logic 2 that Edge Bench starts may use at most 60 % of the RAM.
   but loading a capture failed, and a second attempt took a 64 GB PC to
   full RAM and 99 % CPU. 0.1.2: memory-bounded CSV reader, one instance
   per user, a memory guard, Logic 2's whole process tree closed on exit, and
-  the launcher shows the app's address. The cause of the `.sal` and
-  binary load failures there is **not yet known** (it needs the error text and
-  `edge-bench.log`). Beyond that:
+  the launcher shows the app's address. 0.1.3: an export bigger than the
+  cache limit evicted itself ("exported but would not open"). 0.2.0 reads
+  `.sal` directly, so Logic 2 and its export are no longer in the way. Not
+  yet run on a real-hardware capture. Beyond that:
   The `.bat` files, Explorer "Show in folder", the `Logic.exe` auto-detection
   and the offline wheel install all still need a first run on a real PC. The
   wheel sets were verified to resolve for CPython 3.12 and 3.13 / win_amd64.
 - **Real hardware not tested:** every `.sal` test used Logic 2's simulated
-  Logic 8 / Pro 8 / Pro 16. Binary format **v1** (newer devices) is parsed from
+  Logic 8 / Pro 8 / Pro 16 (Logic 2.4.48). The direct reader has not seen a
+  run longer than ~1 M samples from Logic 2 itself, nor a Logic MSO file. Binary format **v1** (newer devices) is parsed from
   Saleae's published spec and tested on synthetic files only.
 - **If another Logic 2 window is open on Windows**, a second automation
   instance may not start. On macOS two instances run side by side (tested).

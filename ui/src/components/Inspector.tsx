@@ -182,8 +182,8 @@ export function Inspector(p: Props) {
                 <dt>Status</dt><dd data-test="logic2-status">{logic2Text(p.status)}</dd>
                 <dt>Executable</dt><dd className="path">{p.status?.logic2.executable ?? "not found"}</dd>
               </dl>
-              <p className="body-text">.sal captures are opened by Logic 2 in the background and exported once as binary.
-                CSV and binary exports do not need Logic 2.</p>
+              <p className="body-text">.sal captures are read directly — Logic 2 is not needed. Only a .sal in a layout
+                Edge Bench does not know is exported through Logic 2 (the capture's notes then say so).</p>
               <div className="btn-row">
                 <button className="ghost-btn" onClick={p.onBrowseLogic2}><Icon name="folder" /> Choose Logic 2…</button>
                 {p.status?.logic2.configured && <button className="ghost-btn" onClick={p.onResetLogic2}>Auto-detect</button>}
@@ -195,7 +195,7 @@ export function Inspector(p: Props) {
                 <dt>Size</dt><dd>{p.status ? `${bytes(p.status.cache_bytes)} of ${p.status.cache_max_gb} GB` : "—"}</dd>
                 <dt>Folder</dt><dd className="path">{p.status?.cache_dir ?? "—"}</dd>
               </dl>
-              <p className="body-text">Each .sal is exported once; reopening it is instant. Oldest entries are removed above the limit.</p>
+              <p className="body-text">Each .sal is unpacked once (about 1–3 bytes per edge); reopening it is instant. Oldest entries are removed above the limit.</p>
               <div className="btn-row"><button className="ghost-btn" onClick={p.onClearCache}>Clear cache</button></div>
             </section>
             <section className="well">
@@ -216,8 +216,8 @@ export function logic2Text(s: AppStatus | null): string {
   const l = s.logic2;
   if (l.mode === "own") return `Running (started by Edge Bench) · ${l.version ?? ""} · port ${l.port}`;
   if (l.mode === "user") return `Using your open Logic 2 · ${l.version ?? ""} · port ${l.port}`;
-  if (!l.executable) return "Not found — choose Logic.exe below";
-  return "Ready (starts when a .sal is opened)";
+  if (!l.executable) return "Not found — not needed to read .sal";
+  return "Standby — fallback for unusual .sal files";
 }
 
 function Coverage(p: { result: Result | null; capture: CaptureSummary | null; form: Form }) {

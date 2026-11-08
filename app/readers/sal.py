@@ -2,18 +2,23 @@
 
 A `.sal` is a zip.  Its `meta.json` is plain JSON (device, sample rate, enabled
 channels, user channel names) and is read here directly -- instant, no Logic 2.
-The edge data beside it is an undocumented compressed format, so the edges come
-from Logic 2 itself: `app.logic2` exports them as binary into the cache, once.
+The edges beside it (digital-N.bin, Logic 2's own format) are read directly by
+`sal_native` -- no Logic 2 needed.  A file that reader does not recognise goes
+the old way: Logic 2 exports it as binary into the cache, once.
 """
 from __future__ import annotations
 
 import json
+import logging
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.capture import Capture
-from app.readers import binary
+from app.constants import C
+from app.readers import binary, sal_native
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -113,11 +118,44 @@ def busiest(meta: SalMeta, top: int = 3) -> str:
             "turn such channels off in Logic 2 before capturing.")
 
 
-def load(path: Path, *, logic2=None, progress=None, **_) -> Capture:
+def load(path: Path, *, logic2=None, progress=None, native: bool = True, **_) -> Capture:
+    """Read the .sal directly; if this one is not in a layout we know, export it through Logic 2."""
+    meta = read_meta(path)
+    why = None
+    if native:
+        try:
+            return _load_native(path, meta, progress)
+        except sal_native.NativeFormatError as exc:
+            why = str(exc)
+            log.warning("%s: direct read not possible (%s); using the Logic 2 export", path.name, why)
+    cap = _load_export(path, meta, logic2, progress)
+    if why:
+        cap.notes.append(f"Read through a Logic 2 export: the direct reader does not know this file ({why}).")
+    return cap
+
+
+def _load_native(path: Path, meta: SalMeta, progress) -> Capture:
+    from app import cache
+
+    kind = C.sal_native.cache_kind
+    folder = cache.lookup(path, kind)
+    if folder is None:
+        with cache.slot(path, kind) as tmp:
+            sal_native.unpack(path, tmp, meta.digital or None, progress or (lambda _m: None))
+        folder = cache.lookup(path, kind)
+        if folder is None:
+            raise RuntimeError(f"{path.name} was unpacked, but is no longer in the cache ({cache.root()}).")
+    cap = sal_native.load_folder(folder, meta.names, meta.device, path)
+    cap.notes.extend(meta.warnings)
+    if meta.simulation:
+        cap.notes.append("Captured on a Logic 2 simulated device (demo data).")
+    return cap
+
+
+def _load_export(path: Path, meta: SalMeta, logic2, progress) -> Capture:
     """Export through Logic 2 (cached), then read the binary like any other."""
     from app import cache
 
-    meta = read_meta(path)
     folder = cache.lookup(path)
     if folder is None:
         if logic2 is None:

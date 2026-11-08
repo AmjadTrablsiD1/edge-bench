@@ -118,7 +118,7 @@ def find_edge(ch: Channel, t: float, kind: str = "any", glitch_s: float = 0.0,
         if seg.end < t or len(seg) == 0:
             continue
         start_t = max(t, seg.begin)
-        i = int(np.searchsorted(seg.times, start_t, side="left" if inclusive else "right"))
+        i = int(seg.times.searchsorted(start_t, side="left" if inclusive else "right"))
         if glitch_s > 0:
             edge, skip = _filtered(seg, i, start_t, kind, glitch_s, skip, inclusive)
         else:
@@ -132,7 +132,7 @@ def count_in(ch: Channel, t0: float, t1: float) -> int:
     """Raw edges in [t0, t1] -- for the waveform and the evidence panel."""
     total = 0
     for seg in ch.segments:
-        a = int(np.searchsorted(seg.times, t0, side="left"))
-        b = int(np.searchsorted(seg.times, t1, side="right"))
+        a = int(seg.times.searchsorted(t0, side="left"))
+        b = int(seg.times.searchsorted(t1, side="right"))
         total += max(0, b - a)
     return total

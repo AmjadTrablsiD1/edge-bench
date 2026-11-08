@@ -42,13 +42,14 @@ If it does not start
   If the PC gets slow: Task Manager -> end "pythonw.exe" and "Logic".
 
 Big captures
-  Logic 2 keeps edges compressed; Edge Bench has to ask it for a binary
-  export, which takes 8 bytes per edge for every channel. An unconnected
-  (floating) input or a fast clock can make that tens of GB. Turn unused
-  channels off in Logic 2 before capturing. While a .sal is exported, its
-  line in the list shows how many GB have been written so far.
+  Since 0.2.0 a .sal is read directly - Logic 2 does not need to be open
+  or even installed. The first time, each channel is unpacked into the
+  cache (its line in the list shows the progress); after that the file
+  opens instantly. Only a .sal Edge Bench does not recognise is still
+  exported through Logic 2; the Coverage tab then says so.
 
 Status
+  0.2.0: .sal files are read directly (no Logic 2, no export).
   0.1.3: a large export no longer disappears before it is opened, Compare
   no longer loads whole channels into RAM, and the export stops before the
   disk is full.

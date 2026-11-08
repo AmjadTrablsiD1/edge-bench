@@ -133,8 +133,8 @@ def span_activity(ch: Channel, t0: float, t1: float) -> tuple[int, float | None,
         a, b = max(t0, seg.begin), min(t1, seg.end)
         if a >= b:
             continue
-        i0 = int(np.searchsorted(seg.times, a, side="left"))
-        i1 = int(np.searchsorted(seg.times, b, side="right"))
+        i0 = int(seg.times.searchsorted(a, side="left"))
+        i1 = int(seg.times.searchsorted(b, side="right"))
         count += i1 - i0
         prev, level, last = a, seg.level_after(i0 - 1), None     # level from `prev` on
         for j in range(i0, i1, step):

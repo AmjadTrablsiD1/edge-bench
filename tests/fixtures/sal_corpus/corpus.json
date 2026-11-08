@@ -1,0 +1,70 @@
+{
+  "logic2_version": "2.4.48",
+  "captures": [
+    {
+      "name": "logic_8_25000k_trigger",
+      "device": "LOGIC_8",
+      "rate": 25000000
+    },
+    {
+      "name": "logic_8_25000k_trimmed",
+      "device": "LOGIC_8",
+      "rate": 25000000
+    },
+    {
+      "name": "logic_8_1000k_0.001s",
+      "device": "LOGIC_8",
+      "rate": 1000000
+    },
+    {
+      "name": "logic_8_1000k_0.05s",
+      "device": "LOGIC_8",
+      "rate": 1000000
+    },
+    {
+      "name": "logic_8_1000k_2s",
+      "device": "LOGIC_8",
+      "rate": 1000000
+    },
+    {
+      "name": "logic_8_25000k_0.001s",
+      "device": "LOGIC_8",
+      "rate": 25000000
+    },
+    {
+      "name": "logic_8_25000k_0.05s",
+      "device": "LOGIC_8",
+      "rate": 25000000
+    },
+    {
+      "name": "logic_8_25000k_2s",
+      "device": "LOGIC_8",
+      "rate": 25000000
+    },
+    {
+      "name": "logic_pro_16_125000k_0.001s",
+      "device": "LOGIC_PRO_16",
+      "rate": 125000000
+    },
+    {
+      "name": "logic_pro_16_125000k_0.2s",
+      "device": "LOGIC_PRO_16",
+      "rate": 125000000
+    },
+    {
+      "name": "logic_pro_16_50000k_0.001s",
+      "device": "LOGIC_PRO_16",
+      "rate": 50000000
+    },
+    {
+      "name": "logic_pro_16_50000k_0.2s",
+      "device": "LOGIC_PRO_16",
+      "rate": 50000000
+    },
+    {
+      "name": "logic_pro_8_250000k_0.5s",
+      "device": "LOGIC_PRO_8",
+      "rate": 250000000
+    }
+  ]
+}

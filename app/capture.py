@@ -5,8 +5,11 @@ its level before the first edge, and the sorted edge times.  Saleae defines the
 level to flip at every edge, so edge *i* of a segment is rising exactly when
 ``(i + initial) % 2 == 0`` -- direction is never stored, it is parity.
 
-Times are float64 seconds, usually a read-only ``np.memmap`` straight onto the
-exported binary file, so nothing is loaded that is not looked at.
+Times are float64 seconds: a read-only ``np.memmap`` onto a binary export, or
+a ``sal_native.LazyTimes`` that decodes a .sal block by block.  Code that reads
+them uses only len, [i], [a:b] and ``times.searchsorted`` -- never
+``np.searchsorted(times, ...)`` or ``np.asarray(times)``, which would decode
+(and hold) every edge of the channel.
 """
 from __future__ import annotations
 
@@ -38,7 +41,7 @@ class Segment:
 
     def level_at(self, t: float) -> int:
         """Level at time t (an edge exactly at t has already happened)."""
-        n = int(np.searchsorted(self.times, t, side="right"))
+        n = int(self.times.searchsorted(t, side="right"))
         return self.level_after(n - 1)
 
 

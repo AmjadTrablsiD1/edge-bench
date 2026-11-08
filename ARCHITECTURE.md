@@ -53,8 +53,11 @@ Inside `app/`:
 1. **Add files** → `POST /api/dialog/open` → `dialogs.open_files()` returns paths
    → `POST /api/files` registers them.
 2. The server reads `meta.json` from each `.sal` straight away (channel names,
-   rate, device), and a background job asks `logic2.export_binary()` for the
-   edges. That job is cached, so each file is exported only once.
+   rate, device). A background job then reads the edges **directly**
+   (`readers/sal_native.py`): each channel file is inflated once into the
+   cache and indexed, and edge times are decoded on demand. Only a `.sal` in a
+   layout the direct reader does not know goes through `logic2.export_binary()`
+   (the capture's notes say why).
 3. The UI polls `GET /api/files` until the file is `ready`, then calls
    `POST /api/measure {file_id, settings}` → `measure.run()` → a JSON result.
 4. The waveform asks `GET /api/waveform?file_id&t0&t1&px` → `waveform.decimate()`.
@@ -65,7 +68,7 @@ Inside `app/`:
 
 | State | Home | Survives restart? |
 |---|---|---|
-| exported binaries | `~/.cache/edge-bench/<key>/` | yes (LRU-capped) |
+| unpacked .sal channels + index, or exported binaries | `~/.cache/edge-bench/<key>/` (key includes the kind) | yes (LRU-capped) |
 | file list, results | server memory | no |
 | measurement settings, theme, last folder | browser `localStorage` | yes |
 | Logic 2 path override | `~/.config/edge-bench/settings.json` | yes |
@@ -107,6 +110,57 @@ Inside `app/`:
 | Digits from the sample period | A Δt at 10 ns resolution shows 2.1884 ms, not 2.19 ms; Excel values are rounded the same way, so no 2188.3999999 | A fixed 3-significant-digit formatter (hides real precision) |
 | Quit button + `/api/quit` | On Windows the app runs under pythonw.exe with no window, so closing the tab cannot stop it | Killing it from Task Manager |
 | Windows zip with prebuilt UI + wheels | Work PCs have no Node.js and may sit behind a proxy | Building on the PC |
+
+## The direct .sal reader (`app/readers/sal_native.py`)
+
+Logic 2's channel files (`digital-N.bin` inside the `.sal` zip) are
+undocumented; the layout is in the module docstring. In short: a header
+(rate, an optional trim window), then chunks `[a, b)` that each hold run
+lengths, which add up to exactly `b - a`. Each run is 1 to 9 bytes, big-endian,
+7 bits per byte.
+
+- **How it was decoded, and how it is checked.** `scripts/make_sal_corpus.py`
+  records captures with Logic 2's simulated devices, together with Logic 2's
+  own binary export of each; the result is `tests/fixtures/sal_corpus`
+  (Logic 2.4.48). The checks:
+  - every decoded edge sits on Logic 2's sample;
+  - re-encoding every chunk gives Logic 2's bytes exactly;
+  - measurement and waveform results equal the export path's;
+  - `tests/salgen.py`, an independent encoder, adds long runs, trim windows,
+    split chunks and millions of edges.
+
+  After a Logic 2 update, re-record the corpus and run `tests/test_sal_native.py`.
+- **Never guess.** Any mismatch raises `NativeFormatError`, and `sal.load` uses
+  the Logic 2 export instead:
+  - an unknown version or header flag;
+  - a gap between chunks;
+  - runs that don't add up to the chunk;
+  - trailing bytes;
+  - glitch filter on;
+  - an unknown time origin.
+- **Memory follows what is looked at, not the edge count.**
+  - The raw file is memory-mapped.
+  - Indexing works in 256 kB blocks, because decoding needs about 150 times its
+    input in temporary arrays.
+  - Every 4096th edge gets a *mark* (the byte offset and sample of its token),
+    so any edge or `searchsorted` decodes at most 4096 tokens.
+  - Decoded stretches share a 256 MB LRU.
+  - The waveform calls a pixel busy without decoding when a mark lies strictly
+    inside it.
+  - Measured with 100 M edges: indexing ran at 9 M edges/s with 375 MB peak RSS,
+    149 MB of which was the mapped file. A measurement took 12 ms and a full
+    view 1 ms.
+- **Times** are `(sample - trigger_sample) / rate`, correctly rounded. Logic 2's
+  export differs by a few ULPs on some edges (it accumulates in floating
+  point): about 1e-19 s, on the same sample.
+- **Not seen in any Logic 2 file yet:** runs of 4 bytes or more (over about
+  1 M samples, so a channel idle for longer than that at high sample rates).
+  The decoder reads them as the same scheme extended, and the synthetic tests
+  cover that. If Logic 2 writes them differently, the chunk sums fail and the
+  export takes over.
+- **Callers** read times only with `len`, `[i]`, `[a:b]` and `times.searchsorted`.
+  `np.searchsorted(times, …)` or `np.asarray(times)` would decode a whole
+  channel.
 
 ## Known sharp edges
 

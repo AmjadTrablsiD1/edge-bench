@@ -3,7 +3,7 @@
   "app": {
     "id": "edge-bench",
     "name": "Edge Bench",
-    "version": "0.1.3",
+    "version": "0.2.0",
     "icon": "⏱",
     "tagline": "Saleae edge timing — reference edge to every channel, out to Excel"
   },
@@ -104,7 +104,7 @@
   },
   "cache": {
     "max_gb": 20,
-    "key_version": 1
+    "key_version": 2
   },
   "measure": {
     "edge_kinds": [
@@ -280,5 +280,23 @@
     "_comment": "Edge Bench stops itself before it can take the PC down: if its own private memory passes this share of the physical RAM it writes crash.log, says why and exits. Memory-mapped capture files do not count (they are file-backed and the OS can drop them).",
     "max_private_frac": 0.5,
     "interval_s": 1.0
+  },
+  "sal_native": {
+    "_comment": "Direct .sal reader (app/readers/sal_native.py). Logic 2's own channel files: undocumented, decoded from Logic 2.4.48 files and checked against its binary exports. Anything else falls back to the Logic 2 export. Decoding needs ~150x its input in temporary arrays, so it works on pieces and blocks of 256 kB and on at most batch_marks marks at a time.",
+    "magic": "<SALEAE>",
+    "version": 4,
+    "type": 100,
+    "header_flag": 1,
+    "member_regex": "^digital-(\\d+)\\.bin$",
+    "piece_bytes": 262144,
+    "split_window_bytes": 16384,
+    "block_bytes": 262144,
+    "decoded_cache_mb": 256,
+    "max_token_bytes": 9,
+    "copy_chunk_bytes": 1048576,
+    "cache_kind": "native-2",
+    "mark_every": 4096,
+    "cache_span_marks": 8,
+    "batch_marks": 64
   }
 }

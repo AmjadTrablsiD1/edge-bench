@@ -24,8 +24,8 @@ def _channel(ch: Channel, t0: float, t1: float, px: int) -> dict:
         if a >= b:
             continue
         times = seg.times
-        i0 = int(np.searchsorted(times, a, side="left"))
-        i1 = int(np.searchsorted(times, b, side="right"))
+        i0 = int(times.searchsorted(a, side="left"))
+        i1 = int(times.searchsorted(b, side="right"))
         n = i1 - i0
         seg_px = max(1, int(round(px * (b - a) / (t1 - t0))))
         start_level = seg.level_after(i0 - 1)
@@ -34,9 +34,20 @@ def _channel(ch: Channel, t0: float, t1: float, px: int) -> dict:
                         "times": np.asarray(times[i0:i1], dtype=float).tolist()})
         else:
             grid = np.linspace(a, b, seg_px + 1)
-            idx = np.searchsorted(times, grid, side="left")
-            counts = np.diff(idx)
-            levels = seg.initial ^ (idx[:-1] & 1)
+            marks_in = getattr(times, "marks_in", None)          # .sal read directly
+            if marks_in is None:
+                idx = times.searchsorted(grid, side="left")
+                counts = np.diff(idx)
+            else:
+                # a pixel with a mark inside has an edge: drawn busy, nothing to decode
+                busy = marks_in(grid) > 0
+                need = np.zeros(grid.size, bool)
+                need[:-1] |= ~busy
+                need[1:] |= ~busy
+                idx = np.zeros(grid.size, np.int64)
+                idx[need] = times.searchsorted(grid[need], side="left")
+                counts = np.where(busy, 2, np.diff(idx))
+            levels = seg.initial ^ (idx[:-1] & 1)            # used only where a pixel has no edge
             out.append({"mode": "buckets", "begin": a, "end": b,
                         "levels": levels.astype(int).tolist(),
                         "counts": np.minimum(counts, 2).astype(int).tolist()})
