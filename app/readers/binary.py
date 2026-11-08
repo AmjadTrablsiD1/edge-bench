@@ -11,7 +11,8 @@ Layout (little-endian, IEEE-754), from Saleae's published spec:
 v0 is what Logic 8 / Pro 8 / Pro 16 write (verified on Logic 2.4.48); v1 is
 the newer devices'.  Gaps between v1 chunks are missing data and stay gaps.
 
-The edge times are memory-mapped, never read into Python lists.
+The edge times are memory-mapped, never read into Python lists.  A v0 header
+is 44 bytes, so v0 times are not 8-byte aligned; see ``MappedTimes``.
 """
 from __future__ import annotations
 
@@ -97,11 +98,40 @@ def read_header(path: Path) -> BinHeader:
     return BinHeader(version, rate, segments, expected)
 
 
+class MappedTimes(np.memmap):
+    """Memory-mapped edge times whose ``searchsorted`` never copies the file.
+
+    numpy's searchsorted copies an unaligned array whole on every call -- a 2 GB
+    channel cost 2 GB of RAM and seconds per search (found on Windows; same on
+    macOS).  Unaligned times get a vectorised bisection instead, which reads
+    about log2(n) values per time wanted.  Aligned ones use numpy as usual.
+    Arithmetic on these returns plain arrays (np.memmap's own rule).
+    """
+
+    def searchsorted(self, v, side="left", sorter=None):
+        if self.flags.aligned or sorter is not None:
+            return np.ndarray.searchsorted(self, v, side=side, sorter=sorter)
+        if side not in ("left", "right"):
+            raise ValueError(f"side must be 'left' or 'right', not {side!r}")
+        wanted = np.asarray(v, dtype=np.float64)
+        flat = wanted.reshape(-1)
+        lo = np.zeros(flat.shape, dtype=np.intp)
+        hi = np.full(flat.shape, len(self), dtype=np.intp)
+        plain = self.view(np.ndarray)
+        while (live := np.flatnonzero(lo < hi)).size:
+            mid = (lo[live] + hi[live]) // 2
+            at = plain[mid]                      # fancy index: reads only these values
+            go = at < flat[live] if side == "left" else at <= flat[live]
+            lo[live[go]] = mid[go] + 1
+            hi[live[~go]] = mid[~go]
+        return lo.reshape(wanted.shape) if wanted.ndim else lo[0]
+
+
 def load_segments(path: Path) -> tuple[list[Segment], BinHeader]:
     head = read_header(path)
     segs = []
     for initial, begin, end, n, off in head.segments:
-        times = (np.memmap(path, dtype="<f8", mode="r", offset=off, shape=(n,))
+        times = (MappedTimes(path, dtype="<f8", mode="r", offset=off, shape=(n,))
                  if n else np.empty(0, dtype="<f8"))
         segs.append(Segment(initial=initial & 1, begin=begin, end=end, times=times))
     return segs, head

@@ -1,7 +1,7 @@
 // The instrument shell: header · captures rail · waveform + results · inspector · status bar.
 // The page never scrolls; only the rail list, the inspector and the table do.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, api } from "./api";
+import { ApiError, ServerGone, api } from "./api";
 import { CompareResults } from "./components/CompareResults";
 import { compareFocus, CompareWave, rowId } from "./components/CompareWave";
 import { Inspector, logic2Text } from "./components/Inspector";
@@ -50,6 +50,7 @@ export default function App() {
   const [picked, setPicked] = useState<UpdatePackage | null>(null);
   const [focusApp, setFocusApp] = useState(0);
   const [updating, setUpdating] = useState<string | null>(null);
+  const [stopped, setStopped] = useState(false);
   const [mode, setModeState] = useState<"measure" | "compare">(() => {
     try { return localStorage.getItem(MODE_KEY) === "compare" ? "compare" : "measure"; } catch { return "measure"; }
   });
@@ -87,13 +88,33 @@ export default function App() {
 
   const loading = files.some((f) => f.status === "queued" || f.status === "loading");
   useEffect(() => {
-    if (!loading) return;
+    if (!loading || stopped) return;
     const t = window.setInterval(refreshFiles, C.ui.poll_ms);
     return () => window.clearInterval(t);
-  }, [loading, refreshFiles]);
+  }, [loading, stopped, refreshFiles]);
 
   const refreshStatus = useCallback(() => { api.status().then(setStatus).catch(() => {}); }, []);
-  useEffect(() => { refreshFiles(); refreshStatus(); }, [refreshFiles, refreshStatus]);
+  useEffect(() => { if (!stopped) { refreshFiles(); refreshStatus(); } }, [stopped, refreshFiles, refreshStatus]);
+
+  // ---- heartbeat: the server can die under us (memory guard, crash); a page
+  // that goes quiet looks like a bad file.  Any reply, even an error, means alive.
+  // Off after Quit and during an update, where the server goes away on purpose.
+  useEffect(() => {
+    if (quit || updating) return;
+    let misses = 0, timer = 0, live = true;
+    const beat = async () => {
+      try {
+        await api.whoami();
+        misses = 0;
+        setStopped(false);
+      } catch (e) {
+        if (e instanceof ServerGone && ++misses >= C.ui.heartbeat_misses) { setStopped(true); setToasts([]); }
+      }
+      if (live) timer = window.setTimeout(beat, C.ui.heartbeat_ms);
+    };
+    timer = window.setTimeout(beat, C.ui.heartbeat_ms);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [quit, updating]);
   useEffect(() => { if (!loading) refreshStatus(); }, [loading, refreshStatus]);
 
   // ---- updates: what the update folder offers; a failed update says so once
@@ -305,6 +326,15 @@ export default function App() {
         <h2>{updating}…</h2>
         <p>{C.app.name} closes, installs, checks the new version and opens again in a new tab. You can close this one.</p>
         <p className="small">If anything goes wrong, the version you had is put back by itself.</p></div>
+    </div>
+  );
+
+  if (stopped) return (
+    <div className="viewport empty-state" style={{ height: "100dvh" }}>
+      <div className="state-card error" role="alert" data-test="server-stopped"><img src="/favicon.svg" alt="" width={52} height={52} />
+        <h2>{C.app.name} has stopped</h2>
+        <p>Nothing on this page will work until it is running again. If it stopped by itself, a message box says why.</p>
+        <p>Close this tab, start {C.app.name} the way you first opened it, then add your captures again.</p></div>
     </div>
   );
 

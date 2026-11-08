@@ -4,6 +4,10 @@ What changed in each version, newest first. The app shows these sections as
 "What's new" before an update. Each heading is `## <version> — <date>`, and the
 bullets underneath are written for the people who use Edge Bench.
 
+## 0.3.1 — 2026-11-08
+- Large binary exports measure and draw quickly without copying the whole channel into memory (a 2 GB channel: 2.2 GB → 0.3 GB, seconds → instant).
+- If Edge Bench stops (for example its memory guard ends it), the page now says so instead of going quiet.
+
 ## 0.3.0 — 2026-11-08
 - Updates in place: set an update folder (a network share works), and Edge Bench offers each new version itself; or drag a zip onto "Update Edge Bench.bat".
 - Each update checks itself before it stays; if anything fails, the old version is put back automatically.

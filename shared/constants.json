@@ -186,6 +186,8 @@
     "motion_ms": 150,
     "toast_ms": 4500,
     "poll_ms": 400,
+    "heartbeat_ms": 2000,
+    "heartbeat_misses": 2,
     "rail_px": 248,
     "inspector_px": 330,
     "results_px": 236,

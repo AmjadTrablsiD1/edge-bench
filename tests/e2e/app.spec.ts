@@ -98,6 +98,28 @@ test("updates: an update in the folder is offered, installed, and a failure is s
   errors.length = 0;                       // the page now waits for a restart; nothing else to check
 });
 
+test("heartbeat: a stopped server is shown as stopped, a busy one is not", async ({ page }, info) => {
+  // From the Windows PC: when the memory guard ended the server, the page just went quiet.
+  let mode: "busy" | "gone" | "back" = "busy";
+  await page.route("**/api/whoami", (r) =>
+    mode === "busy" ? r.fulfill({ status: 503, json: { detail: "busy" } })   // any reply = alive
+    : mode === "gone" ? r.abort("connectionrefused")
+    : r.continue());
+  await page.goto("/");
+  const stopped = page.locator("[data-test=server-stopped]");
+  await page.waitForTimeout(constants.ui.heartbeat_ms * (constants.ui.heartbeat_misses + 1));
+  await expect(stopped).toHaveCount(0);
+  mode = "gone";
+  await expect(stopped).toContainText("Edge Bench has stopped", { timeout: constants.ui.heartbeat_ms * (constants.ui.heartbeat_misses + 2) });
+  await expect(page.locator("[data-test^=toast-]")).toHaveCount(0);           // no pile of error toasts
+  await page.screenshot({ path: `${SHOTS}/${info.project.name}-15-stopped.png` });
+  await axe(page);
+  mode = "back";
+  await expect(page.locator("[data-test=empty]")).toBeVisible({ timeout: constants.ui.heartbeat_ms * 2 });
+  // The browser logs each refused or 503 request; those are the test's doing.
+  for (let i = errors.length - 1; i >= 0; i--) if (errors[i].includes("Failed to load resource")) errors.splice(i, 1);
+});
+
 test("empty state invites the first capture", async ({ page }, info) => {
   await page.goto("/");
   await expect(page.locator("[data-test=empty]")).toContainText("Open a Saleae capture");

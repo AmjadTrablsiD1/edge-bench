@@ -127,8 +127,8 @@ along with the Logic 2 it started.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 cd ui && npm install && npm run build && cd ..
-.venv/bin/python -m pytest -q          # core, API, compare, .sal reader, updater (167)
-npm install && npx playwright test     # real UI, both themes, axe, fold probe (30)
+.venv/bin/python -m pytest -q          # core, API, compare, .sal reader, updater (170)
+npm install && npx playwright test     # real UI, both themes, axe, fold probe (32)
 .venv/bin/python main.py               # run from the repo
 ```
 
@@ -185,8 +185,12 @@ the Logic 2 that Edge Bench starts may use at most 60 % of the RAM.
   per user, a memory guard, Logic 2's whole process tree closed on exit, and
   the launcher shows the app's address. 0.1.3: an export bigger than the
   cache limit evicted itself ("exported but would not open"). 0.2.0 reads
-  `.sal` directly, so Logic 2 and its export are no longer in the way. Not
-  yet run on a real-hardware capture. Beyond that:
+  `.sal` directly, so Logic 2 and its export are no longer in the way. 0.3.1
+  (fixes found on a Windows 10 PC): searches no longer copy a whole binary
+  channel into RAM (2 GB channel: 2.2 GB → 0.27 GB, 2.7 s → under 0.01 s),
+  and the page says when the app has stopped. On that PC `.sal` and binary
+  loads worked with Logic 2's simulated devices. Not yet run on a
+  real-hardware capture. Beyond that:
   The `.bat` files, Explorer "Show in folder", the `Logic.exe` auto-detection
   and the offline wheel install all still need a first run on a real PC. The
   wheel sets were verified to resolve for CPython 3.12 and 3.13 / win_amd64.

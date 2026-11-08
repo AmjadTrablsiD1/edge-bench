@@ -306,3 +306,44 @@ def test_excel_rounds_to_resolution(tmp_path):
     # and a value that is noisy in binary floating point
     assert excel._num(2188.3999999999996e-6, 1e-6, 10e-9) == 2188.4
     assert excel._num(2188.3999999999996e-6, 1e-6, None) == 2188.4      # 1 ns fallback
+
+
+# ---- unaligned v0 files (44-byte header): searches must not copy the channel --
+# Found on a Windows PC: np.searchsorted copies an unaligned array whole on every
+# call, so one 2 GB channel cost 2 GB of RAM per search.
+
+def test_search_on_an_unaligned_v0_file_matches_numpy(tmp_path):
+    rng = np.random.default_rng(7)
+    t = np.sort(rng.uniform(0.0, 1.0, 5000))
+    t[100:103] = t[100]                          # equal times: left and right differ
+    synth.write_v0(tmp_path / "digital_0.bin", 0, 0.0, 1.0, t)
+    times = binary.load(tmp_path).channel(0).segments[0].times
+    assert not times.flags.aligned
+    wanted = np.concatenate((t[::37], rng.uniform(-0.1, 1.1, 500), [t[100], t[0], t[-1], -1.0, 2.0]))
+    for side in ("left", "right"):
+        assert np.array_equal(times.searchsorted(wanted, side=side), np.searchsorted(t, wanted, side=side))
+        assert np.array_equal(times[1000:3000].searchsorted(wanted, side=side),
+                              np.searchsorted(t[1000:3000], wanted, side=side))
+        for v in wanted[:50]:
+            assert int(times.searchsorted(float(v), side=side)) == int(np.searchsorted(t, v, side=side))
+        grid = wanted[:12].reshape(3, 4)
+        assert np.array_equal(times.searchsorted(grid, side=side), np.searchsorted(t, grid, side=side))
+
+
+def test_measure_and_view_do_not_copy_a_memory_mapped_channel(tmp_path):
+    import tracemalloc
+    t = np.arange(1, 2_000_001) / 1e7            # 16 MB of edge times
+    synth.write_v0(tmp_path / "digital_0.bin", 0, 0.0, 1.0, t)
+    synth.write_v0(tmp_path / "digital_1.bin", 0, 0.0, 1.0, t + 3e-8)
+    cap = binary.load(tmp_path)
+    tracemalloc.start()
+    try:
+        r = measure.run(cap, measure.Settings(ref_channel=0))
+        waveform.decimate(cap, 0.0, 0.2, 2000)
+        waveform.decimate(cap, 0.1, 0.1001, 2000)
+        assert count_in(cap.channel(0), 0.0, 0.5) > 0
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert r.channels
+    assert peak < 4_000_000                      # one copy of a channel would be 16 MB

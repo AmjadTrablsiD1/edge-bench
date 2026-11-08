@@ -58,6 +58,8 @@ Big captures
   exported through Logic 2; the Coverage tab then says so.
 
 Status
+  0.3.1: big binary exports no longer copied into RAM per search; the page
+         says when Edge Bench has stopped.
   0.3.0: in-place updates and rollback (see Updating).
   0.2.0: .sal files are read directly (no Logic 2, no export).
   0.1.3: a large export no longer disappears before it is opened, Compare

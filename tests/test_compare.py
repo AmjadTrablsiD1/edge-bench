@@ -226,3 +226,21 @@ def test_workbook_records_name_matching(pair, tmp_path):
     assert (reset[hdr.index("Channel A")], reset[hdr.index("Channel B")], reset[hdr.index("Name (B)")]) == (1, 3, "Reset_N")
     settings = {r[0].value: r[1].value for r in wb["Settings"].iter_rows(min_row=2)}
     assert settings["Matching"].startswith("by name")
+
+
+def test_span_metrics_do_not_hold_the_whole_span_in_memory(tmp_path, monkeypatch):
+    """From the Windows PC: a memory-mapped (unaligned v0) channel, walked in chunks."""
+    import tracemalloc
+    t = np.arange(1, 2_000_001) / 1e7            # 16 MB of edge times, every pulse 100 ns
+    synth.write_v0(tmp_path / "digital_0.bin", 0, 0.0, 1.0, t)
+    ch = binary.load(tmp_path).channel(0)
+    monkeypatch.setitem(C.compare, "span_chunk_edges", 100_000)
+    tracemalloc.start()
+    try:
+        edges, duty, shortest = span_activity(ch, 0.0, 1.0)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert edges == 2_000_000
+    assert duty == pytest.approx(0.1, abs=1e-6) and shortest == pytest.approx(1e-7, abs=1e-12)
+    assert peak < 8_000_000

@@ -188,7 +188,10 @@ def test_only_one_instance_holds_the_lock(tmp_path):
     finally:
         first.kill()
         first.wait()
-    again = main.single_instance(lock)                         # the OS released it with the process
+    # The OS releases it with the process -- on Windows up to ~70 ms after the kill.
+    deadline = time.monotonic() + 5
+    while (again := main.single_instance(lock)) is None and time.monotonic() < deadline:
+        time.sleep(0.02)
     assert again is not None
     again.close()
 
@@ -228,13 +231,12 @@ def test_guard_reads_this_platform_or_stays_off():
 # ------------------------------------------------------------------ Logic 2
 
 def test_logic2_that_exits_at_once_is_cleaned_up(tmp_path, monkeypatch):
-    quitter = tmp_path / "Logic"
-    quitter.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
-    quitter.chmod(0o755)
-    monkeypatch.setattr(logic2, "find_executable", lambda: quitter)
+    # A "Logic 2" that quits at once: Python itself, which refuses Logic 2's
+    # options with exit code 2 -- unlike a shell script, this runs on Windows too.
+    monkeypatch.setattr(logic2, "find_executable", lambda: Path(sys.executable))
     monkeypatch.setattr(logic2, "_port_open", lambda port: False)
     l2 = logic2.Logic2()
-    with pytest.raises(logic2.Logic2Error, match=r"exited straight away \(code 7\)"):
+    with pytest.raises(logic2.Logic2Error, match=r"exited straight away \(code 2\)"):
         l2._ensure()
     assert l2._proc is None and l2._job is None and l2.mode == "idle"
 

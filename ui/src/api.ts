@@ -4,6 +4,7 @@ import { API } from "./constants";
 import type { AppStatus, Comparison, FileEntry, MatchBy, Result, Settings, Tolerance, UpdateInfo, UpdatePackage, Wave } from "./types";
 
 export class ApiError extends Error {}
+export class ServerGone extends ApiError {}     // no answer at all, as opposed to an error reply
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let r: Response;
@@ -14,7 +15,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     });
   } catch (e) {
     if ((e as Error).name === "AbortError") throw e;
-    throw new ApiError("Edge Bench's server is not answering. Restart the app from its shortcut.");
+    throw new ServerGone("Edge Bench's server is not answering. Restart the app from its shortcut.");
   }
   if (!r.ok) {
     let msg = `${r.status} ${r.statusText}`;
@@ -31,6 +32,7 @@ const post = <T>(path: string, body: unknown, signal?: AbortSignal) =>
   call<T>(path, { method: "POST", body: JSON.stringify(body), signal });
 
 export const api = {
+  whoami: () => call<{ pid: number }>("whoami"),
   status: () => call<AppStatus>("status"),
   files: () => call<{ files: FileEntry[] }>("files"),
   add: (paths: string[]) => post<{ added: FileEntry[] }>("files", { paths }),

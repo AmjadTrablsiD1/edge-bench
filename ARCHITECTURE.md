@@ -104,7 +104,7 @@ Inside `app/`:
 | Decision | Why | Rejected alternative |
 |---|---|---|
 | Logic 2 binary export via Automation API | Only Logic 2 can read `.sal` (the in-zip data is an undocumented compressed format). Binary is 8 bytes per edge per channel and needs no parsing | CSV: one text row per edge on *any* channel, slow to write and to read. Decoding `.sal` ourselves: undocumented, would break on the next Logic release |
-| Memory-map + `searchsorted` | The first edge after t is O(log n). Nothing is loaded that is not looked at | Loading the whole channel into a list |
+| Memory-map + `searchsorted` | The first edge after t is O(log n). Nothing is loaded that is not looked at. v0 times sit after a 44-byte header, so they are unaligned and numpy's `searchsorted` would copy the whole channel per call: `binary.MappedTimes` bisects instead (log2 n reads) | Loading the whole channel into a list; `np.searchsorted` on an unaligned map (2 GB of RAM per search, found on Windows) |
 | Direction from parity, not stored | The level flips at each edge (Saleae's own definition), so `initial ^ (i & 1)` is free | A per-edge direction array |
 | Launch our own Logic 2 on a free port, or reuse one already on 10430 | The user can keep their own Logic 2 window. Our instance is closed when the app exits | `Manager.launch()` — it hard-codes the port and needs pywin32 job objects on Windows |
 | Native dialog in a child process | Browsers never reveal file paths, and Logic 2 needs a path. tkinter on a non-main thread crashes on macOS, so it runs in its own process | Uploading a 1 GB `.sal` into the server |
@@ -223,6 +223,7 @@ Rules for future versions:
 - **The cache keeps the export it just made**, even when that alone is over `cache.max_gb` (0.1.2 evicted it and then could not open it). Older entries make room instead.
 - **No per-edge arrays over a whole span**: `compare.span_activity` walks in `span_chunk_edges` chunks. A span can hold 10^9 edges; one float64 per edge for each of `e`, `bounds`, `widths` and `levels` is about 32 GB.
 - **Exports are watched** (`logic2.ExportWatch`): GB written goes to the progress line, the export stops below `min_free_disk_gb`, and removing the capture stops it. Only a Logic 2 we started can be stopped. On Windows that Logic 2's job may commit at most `job_memory_frac` of RAM.
+- **The page notices a dead server**: a heartbeat calls `/api/whoami` every `ui.heartbeat_ms`; after `ui.heartbeat_misses` refused connections in a row the page shows "Edge Bench has stopped". Any HTTP reply counts as alive, so a busy server never trips it, and it is off after Quit and during an update. Before this, a server ended by the memory guard left a page that looked as if files had stopped loading.
 - Retry is refused while a capture is loading; removing a loading capture cancels it at the reader's next progress step.
 
 - Compare rows are not unique by channel number once channels are matched by name (B's D0 can sit beside A's D0). The UI keys rows with `rowId()` (A's number, or -(B's number + 1)); never key them by `index` alone.
