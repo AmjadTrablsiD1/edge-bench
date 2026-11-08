@@ -13,7 +13,7 @@ import { C } from "./constants";
 import { bytes, measuredText, rate, timeText } from "./format";
 import { loadForm, saveForm, toSettings, toTolerance, type Form } from "./settings";
 import { applyTheme, initialTheme, THEMES, type ThemeName } from "./theme";
-import type { AppStatus, Comparison, FileEntry, Result } from "./types";
+import type { AppStatus, Comparison, FileEntry, Result, UpdateInfo, UpdatePackage } from "./types";
 
 const MODE_KEY = `${C.ui.storage_prefix}.mode`;
 
@@ -46,6 +46,10 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [scope, setScope] = useState<"one" | "all">("one");
   const [quit, setQuit] = useState(false);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [picked, setPicked] = useState<UpdatePackage | null>(null);
+  const [focusApp, setFocusApp] = useState(0);
+  const [updating, setUpdating] = useState<string | null>(null);
   const [mode, setModeState] = useState<"measure" | "compare">(() => {
     try { return localStorage.getItem(MODE_KEY) === "compare" ? "compare" : "measure"; } catch { return "measure"; }
   });
@@ -91,6 +95,40 @@ export default function App() {
   const refreshStatus = useCallback(() => { api.status().then(setStatus).catch(() => {}); }, []);
   useEffect(() => { refreshFiles(); refreshStatus(); }, [refreshFiles, refreshStatus]);
   useEffect(() => { if (!loading) refreshStatus(); }, [loading, refreshStatus]);
+
+  // ---- updates: what the update folder offers; a failed update says so once
+  useEffect(() => {
+    api.update().then((u) => {
+      setUpdate(u);
+      const last = u.last;
+      if (last && !last.ok && Date.now() / 1000 - last.time < C.update.recent_failure_s) {
+        toast("error", `The ${last.kind}${last.to ? ` to ${last.to}` : ""} failed: ${last.error}`,
+          { label: "Details", run: () => setFocusApp((n) => n + 1) });
+      }
+    }).catch(() => {});
+  }, [toast]);
+  const chooseUpdateFolder = async () => {
+    try {
+      const { paths } = await api.dialog("folder", update?.folder ?? undefined);
+      if (paths.length) { setUpdate(await api.setUpdateFolder(paths[0])); setPicked(null); }
+    } catch (e) { fail(e); }
+  };
+  const clearUpdateFolder = async () => { try { setUpdate(await api.setUpdateFolder(null)); } catch (e) { fail(e); } };
+  const pickUpdate = async () => {
+    try {
+      const { paths } = await api.dialog("zip");
+      if (paths.length) setPicked(await api.inspectUpdate(paths[0]));
+    } catch (e) { fail(e); }
+  };
+  const installUpdate = async (pkg: UpdatePackage) => {
+    setUpdating(`Updating to ${pkg.version}`);
+    try { await api.installUpdate(pkg.source); } catch (e) { setUpdating(null); fail(e); }
+  };
+  const rollback = async () => {
+    if (!update?.previous) return;
+    setUpdating(`Rolling back to ${update.previous}`);
+    try { await api.rollback(); } catch (e) { setUpdating(null); fail(e); }
+  };
 
   const file = files.find((f) => f.id === selectedFile) ?? null;
   const capture = file?.status === "ready" ? file.capture ?? null : null;
@@ -261,6 +299,15 @@ export default function App() {
 
   const otherTheme: ThemeName = theme === "midnight" ? "daylight" : "midnight";
 
+  if (updating) return (
+    <div className="viewport empty-state" style={{ height: "100dvh" }}>
+      <div className="state-card" data-test="updating"><img src="/favicon.svg" alt="" width={52} height={52} />
+        <h2>{updating}…</h2>
+        <p>{C.app.name} closes, installs, checks the new version and opens again in a new tab. You can close this one.</p>
+        <p className="small">If anything goes wrong, the version you had is put back by itself.</p></div>
+    </div>
+  );
+
   if (quit) return (
     <div className="viewport empty-state" style={{ height: "100dvh" }}>
       <div className="state-card"><img src="/favicon.svg" alt="" width={52} height={52} />
@@ -291,6 +338,11 @@ export default function App() {
           </div>
         )}
         <div className="header-spacer" />
+        {update?.available && !update.source_checkout && (
+          <button className="ghost-btn" onClick={() => setFocusApp((n) => n + 1)} data-test="update-chip"
+            title={`${C.app.name} ${update.available.version} is in the update folder`}>
+            <Icon name="download" /> Update {update.available.version}</button>
+        )}
         <button className="icon-btn big" onClick={() => setTheme(otherTheme)} data-test="theme-toggle"
           aria-label={`Switch to ${THEMES[otherTheme].label} theme`} title={`${THEMES[otherTheme].label} theme`}>
           <Icon name={theme === "midnight" ? "sun" : "moon"} size={16} />
@@ -424,6 +476,9 @@ export default function App() {
         onQuit={async () => {
           try { await api.quit(); setQuit(true); } catch (e) { fail(e); }
         }}
+        update={update} picked={picked} focusApp={focusApp}
+        onChooseUpdateFolder={chooseUpdateFolder} onClearUpdateFolder={clearUpdateFolder}
+        onPickUpdate={pickUpdate} onInstallUpdate={installUpdate} onRollback={rollback}
         onClearCache={async () => {
           try { const r = await api.clearCache(); toast("ok", `Cache cleared (${bytes(r.cache_bytes)} left).`); refreshFiles(); refreshStatus(); }
           catch (e) { fail(e); }

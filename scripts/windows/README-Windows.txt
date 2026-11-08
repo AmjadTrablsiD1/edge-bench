@@ -41,6 +41,15 @@ If it does not start
   To start completely fresh: delete the .venv folder next to this file.
   If the PC gets slow: Task Manager -> end "pythonw.exe" and "Logic".
 
+Updating
+  From 0.3.0 on, new versions install over this one:
+  - App tab -> Updates -> "Choose update folder..." (e.g. a network share).
+    New zips put there are offered in the app ("Update X.Y" at the top).
+  - Or drag a new EdgeBench-...-windows.zip onto "Update Edge Bench.bat".
+  The new version checks itself before it stays; if anything fails, the old
+  version is put back. "Roll back" returns to the version before.
+  Settings, logs and the cache are never touched.
+
 Big captures
   Since 0.2.0 a .sal is read directly - Logic 2 does not need to be open
   or even installed. The first time, each channel is unpacked into the
@@ -49,6 +58,7 @@ Big captures
   exported through Logic 2; the Coverage tab then says so.
 
 Status
+  0.3.0: in-place updates and rollback (see Updating).
   0.2.0: .sal files are read directly (no Logic 2, no export).
   0.1.3: a large export no longer disappears before it is opened, Compare
   no longer loads whole channels into RAM, and the export stops before the

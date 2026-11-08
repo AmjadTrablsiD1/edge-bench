@@ -30,6 +30,8 @@ elif kind == "folder":
     r = filedialog.askdirectory(mustexist=True, **kw); r = [r] if r else []
 elif kind == "exe":
     r = filedialog.askopenfilename(**kw); r = [r] if r else []
+elif kind == "zip":
+    r = filedialog.askopenfilename(filetypes=[tuple(t) for t in types], **kw); r = [r] if r else []
 else:
     r = filedialog.asksaveasfilename(defaultextension=".xlsx", initialfile=name,
         filetypes=[("Excel workbook", "*.xlsx")], **kw); r = [r] if r else []
@@ -44,13 +46,14 @@ class DialogError(RuntimeError):
 
 def ask(kind: str, title: str = C.files.dialog_title, initial: str | None = None,
         name: str | None = None) -> list[str]:
-    """kind: files | folder | save | exe.  Returns [] when the user cancels."""
+    """kind: files | folder | save | exe | zip.  Returns [] when the user cancels."""
     exe = sys.executable
     if platform.system() == "Windows" and exe.lower().endswith("pythonw.exe"):
         console = exe[:-len("pythonw.exe")] + "python.exe"   # reliable stdout pipe; no window
         exe = console if Path(console).exists() else exe
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if platform.system() == "Windows" else 0
-    arg = json.dumps([kind, title, initial, C.files.dialog_filetypes, name])
+    types = C.update.dialog_filetypes if kind == "zip" else C.files.dialog_filetypes
+    arg = json.dumps([kind, title, initial, types, name])
     try:
         out = subprocess.run([exe, "-c", _SCRIPT, arg], capture_output=True, text=True,
                              encoding="utf-8", env={**os.environ, "PYTHONUTF8": "1"},

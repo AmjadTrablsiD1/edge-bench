@@ -1,10 +1,10 @@
 // Right inspector: the measurement set-up, what was and was not evaluated,
-// and the app's own settings (Logic 2 path, cache).
-import { useState } from "react";
+// and the app's own settings (updates, Logic 2 path, cache).
+import { useEffect, useState } from "react";
 import { C } from "../constants";
 import { bytes, timeText } from "../format";
 import type { FormErrors, Form, ToleranceErrors } from "../settings";
-import type { AppStatus, CaptureSummary, Comparison, EdgeKind, Result } from "../types";
+import type { AppStatus, CaptureSummary, Comparison, EdgeKind, Result, UpdateInfo, UpdatePackage } from "../types";
 import { Field, Icon, Segmented, TimeInput } from "./ui";
 
 type Tab = "setup" | "coverage" | "app";
@@ -23,6 +23,14 @@ interface Props {
   onResetLogic2: () => void;
   onClearCache: () => void;
   onQuit: () => void;
+  update: UpdateInfo | null;
+  picked: UpdatePackage | null;      // a zip chosen with "Install from a file…"
+  focusApp: number;                  // bumped to bring the App tab forward
+  onChooseUpdateFolder: () => void;
+  onClearUpdateFolder: () => void;
+  onPickUpdate: () => void;
+  onInstallUpdate: (pkg: UpdatePackage) => void;
+  onRollback: () => void;
 }
 
 const EDGE_OPTS = (any: boolean) => [
@@ -33,6 +41,7 @@ const EDGE_OPTS = (any: boolean) => [
 
 export function Inspector(p: Props) {
   const [tab, setTab] = useState<Tab>("setup");
+  useEffect(() => { if (p.focusApp) setTab("app"); }, [p.focusApp]);
   const f = p.form;
   const set = (patch: Partial<Form>) => p.setForm({ ...f, ...patch });
   const chans = p.capture?.channels ?? [];
@@ -176,6 +185,7 @@ export function Inspector(p: Props) {
 
         {tab === "app" && (
           <>
+            <Updates {...p} />
             <section className="well">
               <h3 className="well-cap">Logic 2</h3>
               <dl className="evidence">
@@ -208,6 +218,70 @@ export function Inspector(p: Props) {
         )}
       </div>
     </aside>
+  );
+}
+
+function Updates(p: Props) {
+  const u = p.update;
+  const pkg = p.picked ?? u?.available ?? null;
+  const last = u?.last;
+  return (
+    <section className="well" data-test="updates">
+      <h3 className="well-cap">Updates</h3>
+      <dl className="evidence">
+        <dt>Installed</dt><dd data-test="update-current">{C.app.version}</dd>
+        <dt>Update folder</dt><dd className="path" data-test="update-folder">{u?.folder ?? "not set"}</dd>
+        {u?.previous && <><dt>Kept for rollback</dt><dd>{u.previous}</dd></>}
+      </dl>
+      {u?.source_checkout ? (
+        <p className="body-text">This is a source folder (git). Update it with <code>git pull</code>; the launcher then
+          installs changed packages and rebuilds the interface by itself.</p>
+      ) : (
+        <>
+          {u?.error && <p className="body-text warn-text">{u.error}</p>}
+          {last && !last.ok && (
+            <p className="body-text warn-text" data-test="update-failed">
+              The {last.kind === "rollback" ? "rollback" : "update"}{last.to ? ` to ${last.to}` : ""} failed:{" "}
+              {(last.error ?? "").replace(/\.?\s*$/, ".")}{last.from ? ` ${last.from} is still installed.` : ""}</p>
+          )}
+          {pkg ? (
+            <div className="update-card" data-test="update-available">
+              <p className="body-text"><b>{C.app.name} {pkg.version}</b>{" "}
+                {pkg.newer ? "is ready to install." : `is not newer than ${C.app.version}.`}
+                {pkg.offline ? " Offline package: no internet needed." : ""}</p>
+              {pkg.notes.map((n) => (
+                <div key={n.version}>
+                  <p className="notes-head">What's new in {n.version}{n.date ? ` — ${n.date}` : ""}</p>
+                  <ul className="cover-list">{n.items.map((it, i) => <li key={i}>{it}</li>)}</ul>
+                </div>
+              ))}
+              {pkg.newer && (
+                <div className="btn-row">
+                  <button className="primary-btn" onClick={() => p.onInstallUpdate(pkg)} data-test="update-install">
+                    Install {pkg.version} and restart
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : u?.folder && !u.error ? (
+            <p className="body-text">{C.app.name} is up to date.</p>
+          ) : null}
+          <div className="btn-row">
+            <button className="ghost-btn" onClick={p.onChooseUpdateFolder} data-test="update-folder-choose">
+              <Icon name="folder" /> {u?.folder ? "Change folder…" : "Choose update folder…"}</button>
+            {u?.folder && <button className="ghost-btn" onClick={p.onClearUpdateFolder}>Clear</button>}
+            <button className="ghost-btn" onClick={p.onPickUpdate} data-test="update-file">Install from a file…</button>
+          </div>
+          {u?.previous && (
+            <div className="btn-row">
+              <button className="ghost-btn" onClick={p.onRollback} data-test="rollback">Roll back to {u.previous}</button>
+            </div>
+          )}
+        </>
+      )}
+      <p className="body-text">An update checks itself before it stays; if it fails, this version is put back.
+        Settings, logs and the export cache are never touched.</p>
+    </section>
   );
 }
 

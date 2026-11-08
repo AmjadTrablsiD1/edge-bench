@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import updater
 from app import cache, compare, dialogs, excel, logic2, measure, readers, waveform
 from app.capture import Capture
 from app.constants import C
@@ -29,6 +30,7 @@ from app.readers import sal
 
 log = logging.getLogger(__name__)
 UI_DIST = Path(__file__).resolve().parent.parent / "ui" / "dist"
+UPDATE_ROOT = updater.HERE                 # the install folder an update replaces
 
 
 @dataclass
@@ -373,30 +375,109 @@ def reveal(req: RevealReq):
     return {"ok": True}
 
 
-@api.post("/api/quit")
-def quit_app():
-    """The window-less Windows launch (pythonw) has no other way to stop."""
+def _own_server():
     server = getattr(api.state, "server", None)
     if server is None:
         raise HTTPException(409, "Not started by main.py; stop it where it was started.")
+    return server
+
+
+def _quit_soon(server) -> None:
     threading.Timer(0.3, lambda: setattr(server, "should_exit", True)).start()
+
+
+@api.post("/api/quit")
+def quit_app():
+    """The window-less Windows launch (pythonw) has no other way to stop."""
+    _quit_soon(_own_server())
     return {"ok": True}
+
+
+# ----------------------------------------------------------------- updates
+
+def _update_state() -> dict:
+    root = UPDATE_ROOT
+    d = {"current": C.app.version, "folder": updater.update_folder(), "available": None, "error": None,
+         "source_checkout": updater.is_source_checkout(root), "previous": updater.previous_version(root),
+         "last": updater.last_result(root)}
+    if d["folder"]:
+        try:
+            pkg = updater.find_update(d["folder"], C.app.version)
+            d["available"] = pkg.public() if pkg else None
+        except updater.UpdateError as exc:
+            d["error"] = str(exc)
+    return d
+
+
+@api.get("/api/update")
+def update_info():
+    return _update_state()
+
+
+class UpdateFolderReq(BaseModel):
+    path: str | None
+
+
+@api.post("/api/update/folder")
+def set_update_folder(req: UpdateFolderReq):
+    if req.path and not Path(req.path).expanduser().is_dir():
+        raise HTTPException(422, f"{req.path} is not a folder this PC can reach.")
+    updater.set_update_folder(req.path)
+    return _update_state()
+
+
+class UpdatePathReq(BaseModel):
+    path: str
+
+
+@api.post("/api/update/inspect")
+def inspect_update(req: UpdatePathReq):
+    try:
+        return updater.read_package(Path(req.path).expanduser(), C.app.version).public()
+    except updater.UpdateError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@api.post("/api/update/install")
+def install_update(req: UpdatePathReq):
+    """Unpack the update, hand over to its own installer, and quit so it can swap the files."""
+    server = _own_server()
+    try:
+        staged = updater.stage(Path(req.path).expanduser(), UPDATE_ROOT)
+    except updater.UpdateError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    version = updater.installed_version(staged)
+    updater.launch(UPDATE_ROOT, staged=staged, wait_pid=os.getpid())
+    _quit_soon(server)
+    return {"version": version}
+
+
+@api.post("/api/update/rollback")
+def rollback_update():
+    server = _own_server()
+    prev = updater.previous_version(UPDATE_ROOT)
+    if prev is None:
+        raise HTTPException(409, "There is no previous version to go back to.")
+    updater.launch(UPDATE_ROOT, staged=None, wait_pid=os.getpid())
+    _quit_soon(server)
+    return {"version": prev}
 
 
 # ----------------------------------------------------------------- dialogs
 
 class DialogReq(BaseModel):
-    kind: str                     # files | folder | save | exe
+    kind: str                     # files | folder | save | exe | zip
     initial: str | None = None
     name: str | None = None
 
 
 @api.post("/api/dialog")
 def dialog(req: DialogReq):
-    if req.kind not in ("files", "folder", "save", "exe"):
+    if req.kind not in ("files", "folder", "save", "exe", "zip"):
         raise HTTPException(422, "unknown dialog kind")
+    title = C.update.dialog_title if req.kind == "zip" else C.files.dialog_title
     try:
-        return {"paths": dialogs.ask(req.kind, initial=req.initial, name=req.name)}
+        return {"paths": dialogs.ask(req.kind, title=title, initial=req.initial, name=req.name)}
     except dialogs.DialogError as exc:
         raise HTTPException(500, str(exc)) from exc
 

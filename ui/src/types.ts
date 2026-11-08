@@ -72,6 +72,17 @@ export interface WaveSegment {
 export interface WaveChannel { index: number; name: string; segments: WaveSegment[] }
 export interface Wave { t0: number; t1: number; px: number; channels: WaveChannel[] }
 
+export interface UpdateNotes { version: string; date: string; items: string[] }
+export interface UpdatePackage {
+  source: string; name: string; version: string; offline: boolean; newer: boolean; notes: UpdateNotes[];
+}
+export interface UpdateInfo {
+  current: string; folder: string | null; available: UpdatePackage | null; error: string | null;
+  source_checkout: boolean; previous: string | null;
+  last: { ok: boolean; kind: "update" | "rollback"; from: string | null; to: string | null;
+          error: string | null; time: number } | null;
+}
+
 export interface AppStatus {
   logic2: { mode: string; port: number | null; version: string | null; executable: string | null;
             configured: string | null; user_port_open: boolean };

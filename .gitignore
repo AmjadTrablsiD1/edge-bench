@@ -36,5 +36,6 @@ scratch/
 # Keep: package-lock.json, requirements.txt, shared/constants.json, shared/themes.json
 
 # --- Edge Bench ---
+.update/
 dist/
 tests/screenshots/

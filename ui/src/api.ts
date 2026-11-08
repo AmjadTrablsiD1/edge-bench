@@ -1,7 +1,7 @@
 // Thin fetch wrappers.  Errors become one readable sentence (the server's
 // `detail`), never a stack trace in the UI.
 import { API } from "./constants";
-import type { AppStatus, Comparison, FileEntry, MatchBy, Result, Settings, Tolerance, Wave } from "./types";
+import type { AppStatus, Comparison, FileEntry, MatchBy, Result, Settings, Tolerance, UpdateInfo, UpdatePackage, Wave } from "./types";
 
 export class ApiError extends Error {}
 
@@ -40,7 +40,7 @@ export const api = {
     post<Result>("measure", { file_id, settings }, signal),
   waveform: (file_id: number, t0: number, t1: number, px: number, signal?: AbortSignal) =>
     call<Wave>(`waveform?file_id=${file_id}&t0=${t0}&t1=${t1}&px=${Math.round(px)}`, { signal }),
-  dialog: (kind: "files" | "folder" | "save" | "exe", initial?: string, name?: string) =>
+  dialog: (kind: "files" | "folder" | "save" | "exe" | "zip", initial?: string, name?: string) =>
     post<{ paths: string[] }>("dialog", { kind, initial, name }),
   export: (file_ids: number[], settings: Settings, unit: string, path: string) =>
     post<{ path: string; captures: number; skipped: string[] }>("export", { file_ids, settings, unit, path }),
@@ -51,5 +51,10 @@ export const api = {
   exportCompare: (a_id: number, b_id: number, settings: Settings, tolerance: Tolerance, span_s: number | null, match: MatchBy, unit: string, path: string) =>
     post<{ path: string; captures: number; skipped: string[] }>("export/compare", { a_id, b_id, settings, tolerance, span_s, match, unit, path }),
   quit: () => post<{ ok: boolean }>("quit", {}),
+  update: () => call<UpdateInfo>("update"),
+  setUpdateFolder: (path: string | null) => post<UpdateInfo>("update/folder", { path }),
+  inspectUpdate: (path: string) => post<UpdatePackage>("update/inspect", { path }),
+  installUpdate: (path: string) => post<{ version: string }>("update/install", { path }),
+  rollback: () => post<{ version: string }>("update/rollback", {}),
   clearCache: () => post<{ cache_bytes: number }>("cache/clear", {}),
 };

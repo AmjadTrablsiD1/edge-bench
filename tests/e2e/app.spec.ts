@@ -58,6 +58,46 @@ test(".sal read directly: no Logic 2, every channel measured", async ({ page }, 
   await axe(page);
 });
 
+test("updates: this source folder says git pull", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("[data-test=tab-app]").click();
+  const well = page.locator("[data-test=updates]");
+  await expect(well.locator("[data-test=update-current]")).toHaveText(constants.app.version);
+  await expect(well).toContainText("git pull");
+  await expect(page.locator("[data-test=update-chip]")).toHaveCount(0);
+  await axe(page);
+});
+
+test("updates: an update in the folder is offered, installed, and a failure is shown", async ({ page }, info) => {
+  // The install itself is tested for real in tests/test_updater.py; here the UI around it.
+  const next = { source: "S:/share/EdgeBench-9.1.0-windows-offline.zip", name: "EdgeBench-9.1.0-windows-offline.zip",
+    version: "9.1.0", offline: true, newer: true,
+    notes: [{ version: "9.1.0", date: "2026-12-01", items: ["Faster overview.", "Repeated cycles."] }] };
+  await page.route("**/api/update", (r) => r.fulfill({ json: {
+    current: constants.app.version, folder: "S:/share", available: next, error: null, source_checkout: false,
+    previous: "0.2.0", last: { ok: false, kind: "update", from: constants.app.version, to: "9.0.0",
+      error: "The new version did not pass its start-up check", time: Date.now() / 1000 } } }));
+  let installed = "";
+  await page.route("**/api/update/install", async (r) => {
+    installed = JSON.parse(r.request().postData() ?? "{}").path;
+    await r.fulfill({ json: { version: "9.1.0" } });
+  });
+  await page.goto("/");
+  await expect(page.locator("[data-test=toast-error]")).toContainText("The update to 9.0.0 failed");
+  await page.locator("[data-test=update-chip]").click();                       // header -> App tab
+  const card = page.locator("[data-test=update-available]");
+  await expect(card).toContainText("Edge Bench 9.1.0 is ready to install. Offline package");
+  await expect(card).toContainText("Repeated cycles.");
+  await expect(page.locator("[data-test=update-failed]")).toContainText(`start-up check. ${constants.app.version} is still installed.`);
+  await expect(page.locator("[data-test=rollback]")).toHaveText("Roll back to 0.2.0");
+  await page.screenshot({ path: `${SHOTS}/${info.project.name}-14-update.png` });
+  await axe(page);
+  await page.locator("[data-test=update-install]").click();
+  await expect(page.locator("[data-test=updating]")).toContainText("Updating to 9.1.0");
+  expect(installed).toBe(next.source);
+  errors.length = 0;                       // the page now waits for a restart; nothing else to check
+});
+
 test("empty state invites the first capture", async ({ page }, info) => {
   await page.goto("/");
   await expect(page.locator("[data-test=empty]")).toContainText("Open a Saleae capture");

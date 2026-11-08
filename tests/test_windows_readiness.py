@@ -28,6 +28,7 @@ from pathlib import Path
 # error for our code only; third-party libraries are not ours to fix
 warnings.filterwarnings("error", category=EncodingWarning, module=r"^(app|server|main|__main__)(\.|$)")
 sys.path.insert(0, sys.argv[1])
+ROOT_DIR = Path(sys.argv[1])
 fix, tmp = Path(sys.argv[2]), Path(tempfile.mkdtemp())
 
 import main                                   # what the launcher imports
@@ -51,6 +52,11 @@ logic2.SETTINGS = tmp / "settings.json"       # Logic 2 path setting round trip
 logic2.save_path(r"C:\Program Files\Logic\Logic.exe")
 assert logic2.configured_path().endswith("Logic.exe")
 main.single_instance(tmp / "instance.lock")
+import updater                                # the updater reads and writes text too
+updater.settings_file = lambda: tmp / "settings.json"
+updater.set_update_folder(str(tmp)); assert updater.update_folder() == str(tmp)
+assert updater.find_update(tmp, "0.0.1") is None
+updater.release_notes((ROOT_DIR / "CHANGELOG.md").read_text(encoding="utf-8"), "0.0.1", "99.0")
 guard.memory()
 print("OK")
 """
@@ -115,7 +121,19 @@ def test_fatal_leaves_a_log(monkeypatch, tmp_path, capsys):
     assert "UnicodeDecodeError" in (tmp_path / "crash.log").read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("bat", ["run-edge-bench.bat", "scripts/windows/Create desktop shortcut.bat"])
+BATS = ["run-edge-bench.bat", "scripts/windows/Create desktop shortcut.bat", "scripts/windows/Update Edge Bench.bat"]
+
+
+@pytest.mark.parametrize("bat", BATS)
+def test_every_goto_has_its_label(bat):
+    import re
+    text = (ROOT / bat).read_text(encoding="utf-8").lower()
+    labels = set(re.findall(r"^:(\w+)", text, re.M))
+    for target in re.findall(r"goto\s+(\w+)", text):
+        assert target in labels or target == "eof", f"{bat}: goto {target} has no :{target}"
+
+
+@pytest.mark.parametrize("bat", BATS)
 def test_batch_files_have_crlf(bat):
     """cmd.exe can miss GOTO labels in LF-only batch files."""
     raw = (ROOT / bat).read_bytes()

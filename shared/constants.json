@@ -3,7 +3,7 @@
   "app": {
     "id": "edge-bench",
     "name": "Edge Bench",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "icon": "⏱",
     "tagline": "Saleae edge timing — reference edge to every channel, out to Excel"
   },
@@ -16,7 +16,8 @@
     "browser_delay_s": 0.2,
     "dev_port": 8791,
     "lock_file": "instance.lock",
-    "busy_probe_timeout_s": 5
+    "busy_probe_timeout_s": 5,
+    "no_browser_env": "EDGE_BENCH_NO_BROWSER"
   },
   "paths": {
     "config_dir": "~/.config/edge-bench",
@@ -298,5 +299,36 @@
     "mark_every": 4096,
     "cache_span_marks": 8,
     "batch_marks": 64
+  },
+  "update": {
+    "_comment": "In-place updates (updater.py). The install folder holds only replaceable program files plus the 'keep' entries; settings, logs and caches live in the home folder, so an update never touches them.",
+    "package_regex": "^EdgeBench-(\\d+(?:\\.\\d+)*)-windows(-offline)?\\.zip$",
+    "version_regex": "^\\d+(\\.\\d+)*$",
+    "manifest": "MANIFEST.json",
+    "changelog": "CHANGELOG.md",
+    "work_dir": ".update",
+    "keep": [
+      ".venv",
+      ".update",
+      ".git"
+    ],
+    "deps_stamp": "edge-bench-requirements.sha256",
+    "settings_key": "update_folder",
+    "log_name": "update.log",
+    "server_exit_timeout_s": 30,
+    "check_timeout_s": 180,
+    "move_retry_s": 5,
+    "recent_failure_s": 900,
+    "dialog_title": "Choose an Edge Bench update (.zip)",
+    "dialog_filetypes": [
+      [
+        "Edge Bench update",
+        "*.zip"
+      ],
+      [
+        "All files",
+        "*.*"
+      ]
+    ]
   }
 }

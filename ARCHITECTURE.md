@@ -71,7 +71,10 @@ Inside `app/`:
 | unpacked .sal channels + index, or exported binaries | `~/.cache/edge-bench/<key>/` (key includes the kind) | yes (LRU-capped) |
 | file list, results | server memory | no |
 | measurement settings, theme, last folder | browser `localStorage` | yes |
-| Logic 2 path override | `~/.config/edge-bench/settings.json` | yes |
+| Logic 2 path override, update folder | `~/.config/edge-bench/settings.json` | yes |
+| program files | the install folder (an update replaces them) | until the next update |
+| previous version, staged update, journal, last result | `<install>/.update/` | yes |
+| Python packages (+ the requirements hash they match) | `<install>/.venv/` | yes, reinstalled when requirements change |
 
 ## How to add a new X
 
@@ -161,6 +164,52 @@ lengths, which add up to exactly `b - a`. Each run is 1 to 9 bytes, big-endian,
 - **Callers** read times only with `len`, `[i]`, `[a:b]` and `times.searchsorted`.
   `np.searchsorted(times, …)` or `np.asarray(times)` would decode a whole
   channel.
+
+## Updates (`updater.py`)
+
+`updater.py` is standard-library only, because it runs before the packages
+exist. An update runs in this order:
+
+1. **Stage:** unzip into `.update/staged` and check that it is Edge Bench, is
+   newer, and carries its own `updater.py`.
+2. **Hand over:** run the *staged* `updater.py`, so each release installs
+   itself the way it wants. The running app quits; the installer waits for its
+   process to end.
+3. **Swap:** move this version's files into `.update/previous` and the new
+   ones in. These are renames on one disk, so they are instant. Each phase is
+   written to `.update/journal.json` before it starts.
+4. **Dependencies:** `pip` runs only if the hash of `requirements.txt` differs
+   from `.venv/edge-bench-requirements.sha256`. It installs from `wheels/`
+   when the package carries them.
+5. **Check:** `main.py --check` of the new version. If it fails, or anything
+   else does (Ctrl+C included), `restore()` puts the old files back and
+   `.update/last.json` records why.
+6. **Start the new version.**
+
+Crash safety: `restore()` can finish or undo any partly done swap, and running
+it twice does no harm. The launcher runs `updater.py --prepare` before every
+start, and that calls it whenever a journal is not marked `done`.
+`tests/test_updater.py` cuts the power after every possible number of moves
+and checks that the install comes back intact.
+
+Rules for future versions:
+
+- **Never write user data into the install folder.** It is replaced, and only
+  `.venv`, `.update` and `.git` survive. Settings, logs and caches belong in
+  the `paths` folders of `constants.json`.
+- **A release that changes stored data** (settings keys, cache layout) adds a
+  step to `updater.migrate()`. That runs once, in the new version, after its
+  check. A rollback does not undo it, so keep data readable by the previous
+  version, or bump `cache.key_version` and let the cache rebuild.
+- **New top-level files** need nothing extra:
+  - `make_windows_package.sh` lists every entry in `MANIFEST.json`.
+  - The next update replaces exactly those entries.
+  - A file the user put in the folder is never touched.
+- **Changing how updates work** is safe: the *new* version's `updater.py` runs
+  the update, so a fix ships with the release that needs it. An old updater
+  only ever stages and hands over.
+- **Every release** needs a `CHANGELOG.md` section. `scripts/release.sh`
+  enforces it, and the app shows it to users before they install.
 
 ## Known sharp edges
 

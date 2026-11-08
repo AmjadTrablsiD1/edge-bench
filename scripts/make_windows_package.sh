@@ -22,13 +22,28 @@ mkdir -p "$STAGE" "$OUT"
 rsync -a --exclude '__pycache__' "$SRC/app" "$SRC/server" "$SRC/shared" "$STAGE/"
 mkdir -p "$STAGE/ui" "$STAGE/branding"
 rsync -a "$SRC/ui/dist" "$STAGE/ui/"
-cp "$SRC/main.py" "$SRC/requirements.txt" "$SRC/run-edge-bench.bat" "$SRC/LICENSE" "$STAGE/"
+cp "$SRC/main.py" "$SRC/updater.py" "$SRC/requirements.txt" "$SRC/run-edge-bench.bat" \
+   "$SRC/LICENSE" "$SRC/CHANGELOG.md" "$STAGE/"
 cp "$SRC/branding/icon.ico" "$STAGE/branding/"
 cp "$SRC/scripts/windows/"* "$STAGE/"
 # Windows line endings for everything a Windows user opens or runs
 for f in "$STAGE"/*.bat "$STAGE"/*.txt; do perl -pi -e 's/\r?\n/\r\n/' "$f"; done
 
+# MANIFEST.json: what this package owns in the install folder.  The next update
+# replaces exactly these (and never a file the user put there).
+manifest() {
+  python3 - "$STAGE" "$VER" <<'PY'
+import json, sys
+from pathlib import Path
+stage, ver = Path(sys.argv[1]), sys.argv[2]
+entries = sorted(p.name for p in stage.iterdir()) + ["MANIFEST.json"]
+(stage / "MANIFEST.json").write_text(json.dumps(
+    {"app": "edge-bench", "version": ver, "entries": sorted(set(entries))}, indent=2), encoding="utf-8")
+PY
+}
+
 rm -f "$OUT/EdgeBench-$VER-windows.zip" "$OUT/EdgeBench-$VER-windows-offline.zip"
+manifest
 ( cd "$(dirname "$STAGE")" && zip -qr "$OUT/EdgeBench-$VER-windows.zip" EdgeBench )
 
 echo "==> Wheels for the offline zip"
@@ -40,6 +55,7 @@ for v in 3.12 3.13; do
   "$PIP" download -q --only-binary=:all: --platform win_amd64 --python-version "$v" \
     --implementation cp pywin32 -d "$STAGE/wheels/$tag"
 done
+manifest                                   # now with wheels/
 ( cd "$(dirname "$STAGE")" && zip -qr "$OUT/EdgeBench-$VER-windows-offline.zip" EdgeBench )
 
 ls -lh "$OUT"/EdgeBench-"$VER"-windows*.zip

@@ -91,6 +91,29 @@ internet or proxy is needed). Then on the PC:
 3. Double-click **Edge Bench** on the desktop. The first start sets up a
    private `.venv`; after that it starts in a second or two.
 
+**Updating (since 0.3.0).** Install once by hand as above; from then on,
+updates go in place:
+
+- **Update folder.** In *App → Updates → Choose update folder…* pick a folder
+  every PC can reach, for example a network share. Copy each new
+  `EdgeBench-<ver>-windows[-offline].zip` there, or let
+  `scripts/release.sh <ver> --publish <folder>` do it. Edge Bench then shows
+  **Update <ver>** in its header, along with *What's new* from `CHANGELOG.md`.
+- **From a file.** Use *Install from a file…* in the app, or drag the zip onto
+  `Update Edge Bench.bat`.
+- **What happens.** The app quits, and the new version installs itself and
+  passes its own start-up check before it stays. Any failure puts the old
+  version back, and the app says why when it next opens. Python packages are
+  reinstalled only when `requirements.txt` changed.
+- **Rolling back.** *Roll back to <ver>* (or `Update Edge Bench.bat --rollback`)
+  returns to the version before; doing it again goes forward.
+- **What stays.** Settings, logs and the export cache live in the home folder,
+  so an update never touches them. A file of your own in the install folder
+  stays too: an update replaces only what the previous package listed in its
+  `MANIFEST.json`.
+- **From a git clone.** Use `git pull`. The launcher reinstalls changed
+  packages and rebuilds the UI by itself.
+
 **macOS:** `./install.sh`. This builds the UI, installs to
 `~/.local/share/edge-bench`, and creates `~/Desktop/Apps/Edge Bench.command`
 plus the ⏱ tile in App Launcher.
@@ -104,10 +127,16 @@ along with the Logic 2 it started.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 cd ui && npm install && npm run build && cd ..
-.venv/bin/python -m pytest -q          # core + API + compare + Logic 2 end-to-end (74)
-npm install && npx playwright test     # real UI, both themes, axe, fold probe (24)
+.venv/bin/python -m pytest -q          # core, API, compare, .sal reader, updater (167)
+npm install && npx playwright test     # real UI, both themes, axe, fold probe (30)
 .venv/bin/python main.py               # run from the repo
 ```
+
+**Releasing.** Write the `## <ver> — <date>` section in `CHANGELOG.md` (users
+see it as *What's new*), commit, then run `scripts/release.sh <ver> [--publish <folder>]`.
+It refuses to release without that section, or from an uncommitted tree. It
+then bumps the version, runs both test suites, builds the two Windows zips,
+commits and tags `v<ver>`, and copies the zips to the update folder.
 
 UI development with hot reload: `.venv/bin/python main.py --no-browser --port 8791`
 plus `cd ui && npm run dev`. Layers, data flow, and "how to add a format / a

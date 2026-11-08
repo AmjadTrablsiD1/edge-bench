@@ -20,9 +20,11 @@
 
 - [x] 2026-11-08 **Direct .sal reader** (0.2.0): Logic 2's channel format decoded from 15 recorded captures (3 simulated devices, 1–250 MS/s, trigger, trimmed), every edge on Logic 2's own exported sample, every chunk re-encodes to Logic 2's bytes (2157 chunks). Lazy times with a mark every 4096 edges: 100 M edges indexed at 9 M edges/s, measured in 12 ms, full view in 1 ms, 375 MB peak RSS (149 MB of it the mapped file). Unknown layouts fall back to the export. 34 new pytest + 2 Playwright tests; 7 planted decoder bugs all caught
 
+- [x] 2026-11-08 **In-place updates** (0.3.0): `updater.py` (stage → hand over to the new version's own updater → journalled swap → deps only when requirements change → `main.py --check` → keep or restore), update folder + header offer + What's new from CHANGELOG.md, install from a file, rollback both ways, `Update Edge Bench.bat`, launcher `--prepare` (crash recovery, deps, UI rebuild in a git clone), MANIFEST.json in packages, `scripts/release.sh`. 13 pytest (incl. a power cut after every possible move, and a running app updating itself end to end) + 4 Playwright; 6 planted updater bugs all caught; both real 0.3.0 zips installed over a 0.2.9
+
 ## Doing
 - [ ] Windows 11 run with 0.2.0 on a real capture (you): does the .sal open directly, or does its Coverage note say "Read through a Logic 2 export" (and why)?: error text under the capture + edge-bench.log + Task Manager (which process held the memory: pythonw or Logic)
-- [ ] **In-place updates** (paused until 0.1.2 runs): `updater.py` stage → swap → deps → check → rollback, an Updates well in the App tab, an update folder on a share, scripts/release.sh, CHANGELOG.md
+- [ ] First real update on Windows (you): install 0.3.0 by hand once; the next release then comes through the update folder. Windows-only parts not run yet: the installer's console window, waiting on the app's process, pythonw restart
 
 ## Next
 0. **A real-hardware .sal in the corpus** (a long idle channel at 250–500 MS/s gives 4-byte runs, which the simulator never writes), and a Logic MSO file.

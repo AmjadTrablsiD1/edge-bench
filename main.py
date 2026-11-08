@@ -158,6 +158,8 @@ def run() -> int:
 
     # An explicit --port means "serve here" (dev and the e2e suite), never "reuse".
     pinned = "--port" in sys.argv
+    if os.environ.get(C.server.no_browser_env):          # tests that restart the app
+        sys.argv.append("--no-browser")
     lock = None if pinned else single_instance(path("state_dir") / C.server.lock_file)
     if not pinned and lock is None:
         # Another Edge Bench owns this user's session, perhaps busy: use it, never start a second.
