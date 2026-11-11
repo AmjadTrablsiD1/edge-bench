@@ -142,17 +142,43 @@ lengths, which add up to exactly `b - a`. Each run is 1 to 9 bytes, big-endian,
   - glitch filter on;
   - an unknown time origin.
 - **Memory follows what is looked at, not the edge count.**
-  - The raw file is memory-mapped.
-  - Indexing works in 256 kB blocks, because decoding needs about 150 times its
-    input in temporary arrays.
-  - Every 4096th edge gets a *mark* (the byte offset and sample of its token),
-    so any edge or `searchsorted` decodes at most 4096 tokens.
+  - The raw file is memory-mapped for reading edges later; the index is built
+    from the bytes as they are unpacked.
+  - A *mark* (byte offset, sample and edge number of an edge's token) is set
+    at most every 4096 edges, so any edge or `searchsorted` decodes at most
+    4096 tokens. Stretches between marks are **not all the same length**: each
+    index block starts its own. Never compute a stretch as `edge // 4096`; use
+    `m_edge`.
   - Decoded stretches share a 256 MB LRU.
   - The waveform calls a pixel busy without decoding when a mark lies strictly
     inside it.
-  - Measured with 100 M edges: indexing ran at 9 M edges/s with 375 MB peak RSS,
-    149 MB of which was the mapped file. A measurement took 12 ms and a full
-    view 1 ms.
+- **The index is the only pass over all the data, so it is built to be cheap**
+  (0.4.0; it was 90 % of the time to open a `.sal`):
+  - `Indexer` is fed the channel file while `unpack` inflates it. Complete
+    chunks are cut into pieces, pieces are collected into 256 kB blocks, and
+    each block is decoded on a thread pool (`max_workers`); numpy and zlib
+    release the GIL. Results are put together in file order, and at most
+    4 blocks per worker wait, so memory does not follow the file size.
+  - A block is decoded on its own: nothing in it depends on the blocks before.
+    The indexer adds the sample and edge number each block starts at. That is
+    sound because chunks follow each other without a gap and every chunk's
+    runs add up to its length; both are checked, and a file that fails either
+    goes to the Logic 2 export.
+  - `_tokens` parses the run-length grammar without a loop over bytes: a byte
+    below 0x40 always ends a token, so the next byte starts one (a "reset");
+    between resets the bytes pair up. Runs come back as uint8 / uint16 when
+    they fit: most of the time goes into moving arrays through memory.
+  - One channel failing stops the others at once (`_Stopped`), so the fallback
+    to the Logic 2 export does not wait for a full unpack first.
+  - Measured on an 8-core Mac: 1.2 billion edges (1.5 GB unpacked) in 12 s at
+    about 200 MB peak RSS; 0.3.1 needed about 130 s. Unpacking the zip is now
+    the larger part.
+- **Span statistics come from the index** (`LazyTimes.pulses`, `m_even`,
+  `m_min`): per stretch, the samples in its 1st, 3rd, 5th ... run and its
+  shortest run. `capture.pulse_stats` adds whole stretches up and reads only
+  the two ends of a span, so Compare on 10^9 edges costs what it costs on 10^4.
+  `binary.MappedTimes.pulses` builds the same summary for a large binary
+  export on first use (one read through the file, kept in memory).
 - **Times** are `(sample - trigger_sample) / rate`, correctly rounded. Logic 2's
   export differs by a few ULPs on some edges (it accumulates in floating
   point): about 1e-19 s, on the same sample.
@@ -221,7 +247,8 @@ Rules for future versions:
 - **Memory guard** (`app/guard.py`): above `guard.max_private_frac` of physical RAM in *private* memory (memory-mapped captures do not count), the app writes crash.log, shows why and exits. Windows and Linux only.
 - **Logic 2 is a process tree** (Electron). On Windows it runs in a job object that is closed on drop/exit, so no headless Logic 2 is left holding memory. `terminate()` alone stops only the main process.
 - **The cache keeps the export it just made**, even when that alone is over `cache.max_gb` (0.1.2 evicted it and then could not open it). Older entries make room instead.
-- **No per-edge arrays over a whole span**: `compare.span_activity` walks in `span_chunk_edges` chunks. A span can hold 10^9 edges; one float64 per edge for each of `e`, `bounds`, `widths` and `levels` is about 32 GB.
+- **No per-edge arrays over a whole span, and no walk over it either**: `compare.span_activity` asks `capture.pulse_stats`, which answers from per-block summaries and reads only the ends of the span (anything without a summary is read in `span_chunk_edges` chunks). 0.3.1 walked every edge of both captures on each change of a setting: 13 s for two 60 M-edge captures, minutes for real ones, and the screen showed only the two signals meanwhile.
+- **Compare answers twice**: `activity=False` (measured edges only, instant) and the full comparison. The UI shows the quick one only if the full one is not there after `compare.quick_show_ms`, and says what is still coming. An error replaces the "Comparing…" note; it never spins forever.
 - **Exports are watched** (`logic2.ExportWatch`): GB written goes to the progress line, the export stops below `min_free_disk_gb`, and removing the capture stops it. Only a Logic 2 we started can be stopped. On Windows that Logic 2's job may commit at most `job_memory_frac` of RAM.
 - **The page notices a dead server**: a heartbeat calls `/api/whoami` every `ui.heartbeat_ms`; after `ui.heartbeat_misses` refused connections in a row the page shows "Edge Bench has stopped". Any HTTP reply counts as alive, so a busy server never trips it, and it is off after Quit and during an update. Before this, a server ended by the memory guard left a page that looked as if files had stopped loading.
 - Retry is refused while a capture is loading; removing a loading capture cancels it at the reader's next progress step.

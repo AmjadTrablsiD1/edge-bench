@@ -90,6 +90,7 @@ function Summary({ cmp }: { cmp: Comparison }) {
           : s.changed ? "No structural change; some timing moved beyond tolerance."
           : "Nothing moved beyond tolerance."} Click a row for the details.
       </p>
+      {!cmp.activity && <p className="body-text" data-test="compare-pending">Only the measured edges are compared so far. Edge counts, time high and the shortest pulse over the span follow; a very large binary export is read through once for that.</p>}
       {cmp.notes.length > 0 && <ul className="cover-list">{cmp.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
     </div>
   );

@@ -31,9 +31,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
 
-import numpy as np
-
-from app.capture import Capture, Channel
+from app.capture import Capture, Channel, pulse_stats
 from app.constants import C
 from app.edges import find_edge
 from app.measure import ChannelResult, Result, Settings, run
@@ -110,6 +108,7 @@ class Comparison:
     notes: list[str]
     result_a: Result
     result_b: Result
+    activity: bool = True       # False: edges / time high / shortest pulse were not looked at yet
 
     def as_dict(self) -> dict:
         d = asdict(self)
@@ -123,12 +122,12 @@ class Comparison:
 def span_activity(ch: Channel, t0: float, t1: float) -> tuple[int, float | None, float | None]:
     """(edges in [t0, t1], fraction of covered time high, shortest pulse).
 
-    Walks the span in chunks of K.span_chunk_edges, so memory stays flat however
-    many edges the span holds (one array per edge would be ~32 GB for 10^9 edges).
+    The pulses between the edges come from capture.pulse_stats: a .sal read
+    directly and a large binary export answer from their per-block summaries,
+    so a span of 10^9 edges costs about what a span of 10^4 does.
     """
     count, high, covered = 0, 0.0, 0.0
     shortest: float | None = None
-    step = int(K.span_chunk_edges)
     for seg in ch.segments:
         a, b = max(t0, seg.begin), min(t1, seg.end)
         if a >= b:
@@ -136,20 +135,19 @@ def span_activity(ch: Channel, t0: float, t1: float) -> tuple[int, float | None,
         i0 = int(seg.times.searchsorted(a, side="left"))
         i1 = int(seg.times.searchsorted(b, side="right"))
         count += i1 - i0
-        prev, level, last = a, seg.level_after(i0 - 1), None     # level from `prev` on
-        for j in range(i0, i1, step):
-            e = np.asarray(seg.times[j:min(j + step, i1)], dtype=float)
-            widths = np.diff(e, prepend=prev)
-            levels = level ^ (np.arange(widths.size) & 1)
-            high += float(widths[levels == 1].sum())
-            gaps = np.diff(e, prepend=last) if last is not None else np.diff(e)
-            if gaps.size:
-                m = float(gaps.min())
-                shortest = m if shortest is None else min(shortest, m)
-            prev, last, level = float(e[-1]), float(e[-1]), level ^ (e.size & 1)
-        if level == 1:
-            high += b - prev
         covered += b - a
+        if i1 == i0:                                          # no edge: one level throughout
+            high += (b - a) if seg.level_after(i0 - 1) == 1 else 0.0
+            continue
+        if seg.level_after(i0 - 1) == 1:                      # before the first edge
+            high += float(seg.times[i0]) - a
+        if seg.level_after(i1 - 1) == 1:                      # after the last one
+            high += b - float(seg.times[i1 - 1])
+        pulses = getattr(seg.times, "pulses", None)
+        odd, total, low = pulses(i0, i1) if pulses else pulse_stats(seg.times, i0, i1)
+        high += odd if seg.level_after(i0) == 1 else total - odd
+        if low is not None:
+            shortest = low if shortest is None else min(shortest, low)
     return count, (high / covered if covered > 0 else None), shortest
 
 
@@ -298,7 +296,10 @@ def _settings_for_b(s: Settings, pairs: list[tuple[int | None, int | None]]) -> 
 
 
 def compare(cap_a: Capture, cap_b: Capture, s: Settings, tol: Tolerance | None = None,
-            span_s: float | None = None, match: str = K.default_match) -> Comparison:
+            span_s: float | None = None, match: str = K.default_match, activity: bool = True) -> Comparison:
+    """`activity=False` compares the measured edges only -- instant on any capture.
+    The UI shows that first when the full answer takes a while (the first
+    comparison of a very large binary export reads it through once)."""
     tol = tol or Tolerance()
     pairs, notes = pair_channels(cap_a, cap_b, match)
     sb, ref_problem = _settings_for_b(s, pairs)
@@ -354,8 +355,8 @@ def compare(cap_a: Capture, cap_b: Capture, s: Settings, tol: Tolerance | None =
         if ia in s.excluded and not (ra.reference and ra.reference.channel == ia):
             row.verdict = "excluded"
             continue
-        row.a = metrics_for(cap_a.channel(ia), ca, t_ref_a, span, s.glitch_s)
-        row.b = metrics_for(cap_b.channel(ib), cb, t_ref_b, span, s.glitch_s)
+        row.a = metrics_for(cap_a.channel(ia), ca, t_ref_a, span if activity else None, s.glitch_s)
+        row.b = metrics_for(cap_b.channel(ib), cb, t_ref_b, span if activity else None, s.glitch_s)
         _compare_row(row, tol, res)
 
     summary = {v: sum(1 for r in rows if r.verdict == v) for v in K.verdicts}
@@ -365,4 +366,4 @@ def compare(cap_a: Capture, cap_b: Capture, s: Settings, tol: Tolerance | None =
         reference_b=asdict(rb.reference) if rb.reference and not ref_problem else None,
         span_s=span, resolution_s=res, tolerance=tol, settings=s, match=match, rows=rows,
         summary=summary, notes=notes + ra.notes + [n for n in rb.notes if n not in ra.notes],
-        result_a=ra, result_b=rb)
+        result_a=ra, result_b=rb, activity=activity)

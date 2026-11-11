@@ -34,27 +34,37 @@ point; every edge is on the same sample.
 
 Memory: the channel file is unpacked once into the export cache (about 1 to
 3.5 bytes per edge on disk, against the binary export's 8) and memory-mapped.
-Indexing it once sets a mark every C.sal_native.mark_every edges (byte offset
-and sample of that edge's token), so any edge is found by decoding at most
-that many tokens; decoded stretches share a cache of decoded_cache_mb.  A
-billion-edge channel costs its marks (~4 MB) and what is in view -- the way
-Logic 2 does it, not 8 GB of float64.
+Indexing it once sets a mark at most every C.sal_native.mark_every edges (byte
+offset, sample and edge number of that edge's token), so any edge is found by
+decoding at most that many tokens; decoded stretches share a cache of
+decoded_cache_mb.  A billion-edge channel costs its marks (~12 MB) and what is
+in view -- the way Logic 2 does it, not 8 GB of float64.
+
+Speed: the index is the only pass over all the data, so it is built to be
+cheap.  The file is cut into blocks of block_bytes that are decoded
+independently on several threads (numpy releases the GIL); each block starts
+its own stretch of marks, which is why the stretches are not all the same
+length.  Per stretch the index also keeps two numbers -- the sum of every
+second run and the shortest run -- from which Compare gets edge counts, time
+high and the shortest pulse of any span without decoding it (`pulses`).
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import struct
 import threading
 import zipfile
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 import numpy as np
 
-from app.capture import Capture, Channel, Segment
+from app.capture import Capture, Channel, Segment, pulse_stats
 from app.constants import C
 
 K = C.sal_native
@@ -68,6 +78,10 @@ _INDEX = "index.npz"
 
 class NativeFormatError(ValueError):
     """This .sal is not in the layout this reader knows; use the Logic 2 export."""
+
+
+class _Stopped(Exception):
+    """Another channel of the same capture failed; this one stops too."""
 
 
 # ------------------------------------------------------------------ header
@@ -109,89 +123,125 @@ def read_header(buf) -> Header:
 
 # ------------------------------------------------------------- run lengths
 
-def token_starts(p: np.ndarray, reset: np.ndarray) -> np.ndarray:
-    """Which bytes start a run-length token.  `reset[i]`: a token starts at i.
+_ALT = (np.arange(1 << 20) & 1).astype(np.uint8)
 
-    Vectorised parse of  00vvvvvv | 01vvvvvv 1vvvvvvv* 0vvvvvvv.  Bytes >= 0x80
-    only continue a token; the byte after them ends it.  Of the remaining
-    ("free") bytes, a stretch of 01xxxxxx always starts at a token start and
-    pairs up two by two; when it is odd, its last byte takes the next byte
-    with it (continuation bytes, or one 00xxxxxx as the end of a 2-byte token).
-    Raises NativeFormatError on any byte sequence that grammar does not allow.
+
+def _alt(n: int) -> np.ndarray:
+    """0, 1, 0, 1 ... (n of them)."""
+    global _ALT
+    if _ALT.size < n:
+        _ALT = (np.arange(max(n, 2 * _ALT.size)) & 1).astype(np.uint8)
+    return _ALT[:n]
+
+
+def _tokens(p: np.ndarray, pstart: np.ndarray) -> tuple[np.ndarray | None, np.ndarray]:
+    """Payload bytes -> (byte position of every token, its run length).
+
+    `pstart`: where each piece starts in `p` (a token starts there).  The
+    positions are None when every token is one byte (token i is byte i) -- the
+    usual case on a fast clock, and by far the cheapest.  The runs come in the
+    smallest integer type that holds them (uint8, uint16 or int64): most of
+    the time here goes into moving arrays through memory, so add them up
+    with dtype=np.int64.
+
+    The grammar  00vvvvvv | 01vvvvvv 1vvvvvvv* 0vvvvvvv  is parsed without a
+    loop over bytes.  A byte < 0x40 always ends a token, and so does the byte
+    after continuation bytes (>= 0x80): the next byte is a token start for
+    sure -- a "reset".  Between two resets the bytes are 01xxxxxx, and they
+    pair up from the reset on (start, last byte, start, last byte ...), so a
+    byte starts a token when it is an even number of bytes after its reset.
+    Raises NativeFormatError on any byte sequence the grammar does not allow.
     """
     n = p.size
-    if n == 0:
-        return np.zeros(0, bool)
+    if n == 0 or pstart[-1] >= n or (np.diff(pstart) == 0).any():
+        raise NativeFormatError("a chunk with an empty payload")
+    lt40 = p < 0x40
+    if lt40.all():
+        return None, p + np.uint8(1)
     hi = p >= 0x80
-    linked = ~reset                                   # byte i continues from byte i - 1
-    prev_hi = np.zeros(n, bool)
-    prev_hi[1:] = hi[:-1]
-    prev_hi &= linked
-    term = ~hi & prev_hi                              # the byte that ends continuation bytes
-    free = ~hi & ~term
-    l1 = free & (p >= 0x40)
-    l0 = free & (p < 0x40)
-
-    prev_l1 = np.zeros(n, bool)
-    prev_l1[1:] = l1[:-1]
-    prev_l1 &= linked
-    idx = np.arange(n, dtype=np.int64)
-    run_first = np.maximum.accumulate(np.where(l1 & ~prev_l1, idx, 0))
-    even = l1 & ((idx - run_first) % 2 == 0)          # first of a pair, or a long token's start
-    next_l1 = np.zeros(n, bool)
-    next_l1[:-1] = l1[1:] & linked[1:]
-    run_last = l1 & ~next_l1
-
-    takes_next = np.flatnonzero(run_last & even)      # odd stretch: its last byte needs a partner
-    nxt = takes_next + 1
-    if nxt.size and (nxt[-1] >= n or reset[nxt[nxt < n]].any()):
-        raise NativeFormatError("a run-length token is cut off at the end of a chunk")
-    consumed = np.zeros(n, bool)
-    consumed[nxt[~hi[nxt]]] = True                    # a 00xxxxxx closing a 2-byte token
-
-    # continuation bytes must follow a token start and end inside the chunk
-    first_hi = np.flatnonzero(hi & ~prev_hi)
-    if first_hi.size:
-        before = first_hi - 1
-        if before[0] < 0 or (~linked[first_hi]).any() or not (run_last[before] & even[before]).all():
+    any_hi = bool(hi.any())
+    reset = np.empty(n, bool)
+    reset[0] = True
+    reset[1:] = lt40[:-1]
+    if any_hi:
+        term = np.zeros(n, bool)                          # the byte that ends continuation bytes
+        np.logical_and(hi[:-1], ~hi[1:], out=term[1:])
+        reset[1:] |= term[:-1]
+    if pstart.size > 1:                                   # belt and braces: in a valid file the byte
+        reset[pstart] = True                              # before a piece already ends a token
+    start = _even_from_reset(reset)
+    if any_hi:
+        start &= ~hi
+        start &= ~term
+        first = np.flatnonzero(hi[1:] & ~hi[:-1]) + 1     # continuation bytes need a 01xxxxxx start
+        if hi[0] or not (start[first - 1] & ~lt40[first - 1]).all():
             raise NativeFormatError("continuation bytes without a token start")
-    last_hi = np.flatnonzero(hi & ~np.append(hi[1:] & linked[1:], False))
-    if last_hi.size and (last_hi[-1] + 1 >= n or reset[last_hi + 1].any()):
+    last = np.append(pstart[1:], n) - 1                   # every piece ends where a token ends
+    if (hi[last] | (start[last] & ~lt40[last])).any():
         raise NativeFormatError("a run-length token is cut off at the end of a chunk")
-    return even | (l0 & ~consumed)
+
+    s = np.flatnonzero(start)
+    b = p[s]
+    multi = np.flatnonzero(b >= 0x40)
+    at = s[multi] + 1
+    nb = p[at]
+    if not any_hi:                                        # one or two bytes: a run is at most 2**13
+        v = b.astype(np.uint16)
+        v[multi] = ((b[multi] & np.uint8(0x3F)).astype(np.uint16) << np.uint16(7)) | nb
+        return s, v + np.uint16(1)
+    v = b.astype(np.int64)
+    acc = ((b[multi] & 0x3F).astype(np.int64) << 7) | (nb & 0x7F)
+    cur = np.flatnonzero(nb >= 0x80)                      # tokens of three bytes and more: rare
+    at, size = at[cur] + 1, 2
+    while cur.size:
+        size += 1
+        if size > K.max_token_bytes:
+            raise NativeFormatError(f"a token longer than {K.max_token_bytes} bytes")
+        nb = p[at]
+        acc[cur] = (acc[cur] << 7) | (nb & 0x7F)
+        go = nb >= 0x80
+        cur, at = cur[go], at[go] + 1
+    v[multi] = acc
+    return s, v + 1
 
 
-def token_values(p: np.ndarray, starts: np.ndarray) -> np.ndarray:
-    """The value v of every token (run length - 1), uint64."""
-    s = np.flatnonzero(starts)
-    if s.size == 0:
-        return np.zeros(0, np.uint64)
-    if s[0] != 0:
-        raise NativeFormatError("payload does not start with a token")
-    lens = np.diff(np.append(s, p.size))
-    if lens.max() > K.max_token_bytes:
-        raise NativeFormatError(f"a {lens.max()}-byte token (at most {K.max_token_bytes} expected)")
-    tok = np.repeat(np.arange(s.size), lens)
-    k = np.arange(p.size) - s[tok]
-    bits = np.where(k == 0, p & 0x3F, p & 0x7F).astype(np.uint64)
-    shift = (7 * (lens[tok] - 1 - k)).astype(np.uint64)
-    return np.add.reduceat(bits << shift, s)
+def _even_from_reset(reset: np.ndarray) -> np.ndarray:
+    """True at every byte an even number of bytes after the last True of `reset` (changed in place).
+
+    Most bytes are resets or one byte after one, so only the stretches of three
+    bytes and more need work: a few rounds add their bytes 2, 4, 6 ... on; what
+    is still longer after that (a steady clock with two-byte runs is one long
+    stretch) is filled by slices, or all at once when there are very many.
+    """
+    n = reset.size
+    start = reset
+    at = np.flatnonzero(reset[:-2] & ~reset[1:-1] & ~reset[2:]) + 2 if n > 2 else np.zeros(0, np.int64)
+    known = start.copy() if at.size else start             # `reset` as it was: `start` grows below
+    for _ in range(int(K.pair_rounds)):
+        if not at.size:
+            return start
+        start[at] = True
+        at = at[at + 2 < n] + 2
+        at = at[~known[at - 1] & ~known[at]]
+    if not at.size:
+        return start
+    r = np.flatnonzero(known)
+    if at.size > K.pair_slices:
+        return np.repeat((r & 1).astype(np.uint8), np.diff(r, append=n)) == _alt(n)
+    ends = np.append(r, n)[np.searchsorted(r, at, side="right")]
+    for a, e in zip(at.tolist(), ends.tolist()):
+        start[a:e:2] = True
+    return start
 
 
 # ----------------------------------------------------------------- pieces
 
 def _safe_split(p: np.ndarray, lo: int, hi: int) -> int | None:
-    """A byte position in [lo, hi) where a token must start, or None.
-
-    i starts a token when byte i-1 closes one for sure: it is < 0x40 and byte
-    i-2 is not 01xxxxxx (a lone 00xxxxxx, or the end of continuation bytes).
-    """
-    lo = max(lo, 2)
+    """A byte position in [lo, hi) where a token starts for sure: right after a byte < 0x40."""
+    lo = max(lo, 1)
     if hi <= lo:
         return None
-    w = p[lo - 2:hi]
-    ok = (w[1:-1] < 0x40) & ((w[:-2] < 0x40) | (w[:-2] >= 0x80))
-    hits = np.flatnonzero(ok)
+    hits = np.flatnonzero(np.asarray(p[lo - 1:hi - 1]) < 0x40)
     return int(lo + hits[0]) if hits.size else None
 
 
@@ -210,23 +260,42 @@ def _pieces(buf: np.ndarray, off: int, nb: int) -> list[tuple[int, int]]:
     return out
 
 
+def _gather(buf: np.ndarray, off: np.ndarray, ln: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The payload bytes of these pieces as one array, and where each piece starts in it."""
+    pstart = np.cumsum(ln) - ln
+    lo, hi = int(off[0]), int(off[-1] + ln[-1])
+    total = int(pstart[-1] + ln[-1])
+    region = np.asarray(buf[lo:hi])
+    if hi - lo == total:                                  # one piece, or pieces of one chunk
+        return region, pstart
+    if off.size <= 32:
+        return np.concatenate([region[o:o + n] for o, n in zip((off - lo).tolist(), ln.tolist())]), pstart
+    return region[np.repeat(off - lo - pstart, ln) + np.arange(total)], pstart      # skip the chunk headers
+
+
 @dataclass
 class Index:
-    """Everything needed to find and decode any edge of one channel."""
+    """Everything needed to find and decode any edge of one channel.
+
+    "Edge d" counts every edge in the file; the capture's own edges are
+    d = skip .. skip + count - 1 (a trimmed capture keeps whole chunks).
+    Stretch m is the edges m_edge[m] .. m_edge[m+1] - 1, at most mark_every.
+    """
     rate: float
     level0: int                  # level at the start of the data window
     first: int                   # first and last sample of the window
     last: int
-    skip: int                    # decoded edges before the window
+    skip: int                    # edges in the file before the window
     count: int                   # edges inside the window
-    total: int                   # edges decoded from the file
-    p_off: np.ndarray            # per piece: payload byte offset, length, sample at its first
-    p_len: np.ndarray            #   run's start, and whether that run start is not an edge
-    p_base: np.ndarray           #   (only the data start)
-    p_nofirst: np.ndarray
-    m_off: np.ndarray            # every mark_every-th edge: byte offset of its token, its
-    m_sample: np.ndarray         #   sample, and its piece -- decoding can start at any of them
+    total: int                   # edges in the file
+    p_off: np.ndarray            # per piece: payload byte offset and length
+    p_len: np.ndarray
+    m_off: np.ndarray            # per mark: byte offset of its edge's token, its sample, its
+    m_sample: np.ndarray         #   piece and its edge number -- decoding can start at any of them
     m_piece: np.ndarray
+    m_edge: np.ndarray
+    m_even: np.ndarray           # per stretch: samples in its 1st, 3rd, 5th ... run, and its
+    m_min: np.ndarray            #   shortest run (a run = from one edge to the next)
 
     def save(self, path: Path) -> None:
         np.savez(path, **{k: np.asarray(v) for k, v in self.__dict__.items()})
@@ -241,131 +310,240 @@ class Index:
         return cls(**d)
 
 
-def _runs(buf: np.ndarray, off: np.ndarray, ln: np.ndarray):
-    """Pieces -> (runs, each token's piece, tokens per piece, each piece's first token, token byte offsets)."""
-    off, ln = np.asarray(off, np.int64), np.asarray(ln, np.int64)
-    total = int(ln.sum())
-    pstart = np.cumsum(ln) - ln
+def _span_pieces(ix: Index, m0: int, m1: int) -> tuple[list[int], list[int]]:
+    """Payload pieces (offset, length) that hold stretches m0 .. m1 - 1."""
+    j0, o0 = int(ix.m_piece[m0]), int(ix.m_off[m0])
+    if m1 < ix.m_off.size:
+        j1, o1 = int(ix.m_piece[m1]), int(ix.m_off[m1])
+    else:
+        j1 = ix.p_off.size - 1
+        o1 = int(ix.p_off[j1] + ix.p_len[j1])
+    if j0 == j1:
+        return [o0], [o1 - o0]
+    off = [o0, *ix.p_off[j0 + 1:j1 + 1].tolist()]
+    ln = [int(ix.p_off[j0] + ix.p_len[j0]) - o0, *ix.p_len[j0 + 1:j1].tolist(), o1 - int(ix.p_off[j1])]
+    if ln[-1] == 0:
+        off, ln = off[:-1], ln[:-1]
+    return off, ln
+
+
+def decode_samples(buf: np.ndarray, ix: Index, spans: list[tuple[int, int]]) -> list[np.ndarray]:
+    """Edge samples of several stretch ranges [m0, m1), decoded in one vectorised pass.
+
+    Chunks follow each other without a gap and their runs add up (both checked
+    when the index was built), so inside a range the edges are simply the
+    running sum of the runs from the mark's own sample.
+    """
+    off, ln, firsts = [], [], []
+    for m0, m1 in spans:
+        o, n = _span_pieces(ix, m0, m1)
+        firsts.append(len(off))
+        off += o
+        ln += n
+    p, pstart = _gather(buf, np.array(off, np.int64), np.array(ln, np.int64))
+    s, runs = _tokens(p, pstart)
+    at = pstart[firsts] if s is None else np.searchsorted(s, pstart[firsts])
+    at = [*at.tolist(), runs.size]
+    cs = np.cumsum(runs, dtype=np.int64)
+    out = []
+    for (m0, m1), a, b in zip(spans, at[:-1], at[1:]):
+        want = (int(ix.m_edge[m1]) if m1 < ix.m_edge.size else ix.total) - int(ix.m_edge[m0])
+        if b - a != want:
+            raise NativeFormatError(f"decoded {b - a} edges between marks, expected {want}")
+        out.append(cs[a:b] - runs[a:b] + (int(ix.m_sample[m0]) - (int(cs[a - 1]) if a else 0)))
+    return out
+
+
+def _edges_before(buf: np.ndarray, ix: Index, sample: int, side: str) -> int:
+    """np.searchsorted over every edge sample of the file, decoding one stretch."""
+    m = int(np.searchsorted(ix.m_sample, sample, side=side)) - 1
+    if m < 0:
+        return 0
+    return int(ix.m_edge[m]) + int(np.searchsorted(decode_samples(buf, ix, [(m, m + 1)])[0], sample, side=side))
+
+
+def _index_block(p: np.ndarray, pstart: np.ndarray, off: np.ndarray, first: bool, every: int):
+    """One block, on its own: its pieces' sums, and a mark every `every` edges from its start.
+
+    `p`: the payload bytes of the block's pieces, `pstart` where each piece
+    starts in it, `off` where each piece is in the channel file.  Nothing
+    here depends on the blocks before it, so blocks run in parallel; the
+    indexer adds the sample and the edge number each block starts at.
+    """
+    s, runs = _tokens(p, pstart)
     if off.size == 1:
-        p = np.asarray(buf[int(off[0]):int(off[0]) + total])
-    else:                                              # gather the payloads, skipping chunk headers
-        lo, hi = int(off[0]), int(off[-1] + ln[-1])
-        p = np.asarray(buf[lo:hi])[np.repeat(off - lo - pstart, ln) + np.arange(total)]
-    reset = np.zeros(total, bool)
-    reset[pstart] = True
-    starts = token_starts(p, reset)
-    runs = token_values(p, starts).astype(np.int64) + 1
-    s = np.flatnonzero(starts)
-    tok_piece = np.repeat(np.arange(off.size), ln)[s]
-    per_piece = np.bincount(tok_piece, minlength=off.size)
-    if (per_piece == 0).any():
-        raise NativeFormatError("a chunk with an empty payload")
-    first_tok = np.cumsum(per_piece) - per_piece
-    tok_off = off[tok_piece] + (s - pstart[tok_piece])
-    return runs, tok_piece, per_piece, first_tok, tok_off
+        sums = np.array([runs.sum(dtype=np.int64)], np.int64)
+    else:
+        sums = np.add.reduceat(runs, pstart if s is None else np.searchsorted(s, pstart), dtype=np.int64)
+    j0 = 1 if first else 0                                # the start of the data is not an edge
+    body = runs[j0:]
+    full = body.size // every
+    rows = body[:full * every].reshape(full, every)
+    st_sum = rows.sum(axis=1, dtype=np.int64)
+    st_even = rows[:, ::2].sum(axis=1, dtype=np.int64)
+    st_min = rows.min(axis=1).astype(np.int64) if full else np.zeros(0, np.int64)
+    rest = body[full * every:]
+    if rest.size:
+        st_sum = np.append(st_sum, rest.sum(dtype=np.int64))
+        st_even = np.append(st_even, rest[::2].sum(dtype=np.int64))
+        st_min = np.append(st_min, np.int64(rest.min()))
+    tok = j0 + np.arange(st_sum.size, dtype=np.int64) * every          # the marks' tokens
+    rel = (int(runs[0]) if first else 0) + np.cumsum(st_sum) - st_sum    # their samples, from the block start
+    pos = tok if s is None else s[tok]
+    piece = np.searchsorted(pstart, pos, side="right") - 1
+    return runs.size, sums, tok, rel, off[piece] + pos - pstart[piece], piece, st_even, st_min
 
 
-def _positions(runs, tok_piece, first_tok, base, nofirst) -> tuple[np.ndarray, np.ndarray]:
-    """(edge samples, which tokens are edges): every run starts at an edge but the data start."""
-    cs = np.cumsum(runs)
-    before = np.where(first_tok > 0, cs[np.maximum(first_tok - 1, 0)], 0)
-    run_start = base[tok_piece] + (cs - runs - before[tok_piece])
-    keep = np.ones(runs.size, bool)
-    keep[first_tok[np.asarray(nofirst, bool)]] = False
-    return run_start[keep], keep
+class Indexer:
+    """Index a channel file as its bytes arrive -- while it is still being unpacked.
 
+    `feed` the file in order, in blocks of any size; `finish` returns the
+    Index (without the trim window: see `build_index`).  Complete chunks are
+    cut into pieces, pieces are collected into blocks of block_bytes, and
+    each block is decoded on the pool; results are put together in file
+    order.  At most a few blocks per worker wait at any time, so memory does
+    not follow the file size, and feeding slows down to what the pool can do.
+    """
 
-def build_index(raw: Path, say: Callable[[str], None] = lambda _m: None) -> Index:
-    buf = np.memmap(raw, dtype=np.uint8, mode="r")
-    h = read_header(bytes(buf[:128]))
-    # walk the chunk headers (dozens per second of capture), straight into arrays
-    if h.chunks == 0:
-        raise NativeFormatError("no chunks")
-    ch_a = np.empty(h.chunks, np.int64)
-    ch_b = np.empty(h.chunks, np.int64)
-    ch_off = np.empty(h.chunks, np.int64)
-    ch_nb = np.empty(h.chunks, np.int64)
-    off = h.size
-    mv = memoryview(buf)
-    try:
-        for i in range(h.chunks):
-            a, b, level, zero, nb = _CHUNK.unpack_from(mv, off)
+    def __init__(self, pool: ThreadPoolExecutor | None = None,
+                 done: Callable[[int], None] = lambda _n: None) -> None:
+        self.pool, self.done = pool, done
+        self.buf, self.pos, self.at = b"", 0, 0           # unread bytes, read position, file offset of buf[0]
+        self.h: Header | None = None
+        self.level_first = 0
+        self.chunk = 0                                    # chunks read so far
+        self.next_sample: int | None = None               # where the next chunk must start
+        self.ch_len: list[int] = []
+        self.block: list[tuple[bytes, int, int]] = []     # pieces waiting: (payload, file offset, chunk)
+        self.block_bytes = 0
+        self.first_block = True
+        self.waiting: list = []                           # blocks being decoded, in file order
+        self.limit = 4 * workers() if pool is not None else 1
+        self.p_off: list[int] = []
+        self.p_len: list[int] = []
+        self.tokens = 0
+        self.sample = 0
+        self.sum_chunk, self.sum_so_far = 0, 0            # the chunk whose runs are being added up
+        self.marks: list[tuple] = []
+
+    # -- reading ----------------------------------------------------------
+    def feed(self, data: bytes) -> None:
+        self.at += self.pos
+        self.buf = self.buf[self.pos:] + data
+        self.pos = 0
+        if self.h is None:
+            if len(self.buf) < K.header_max_bytes:
+                return                                    # finish() reads a shorter file's header
+            self._header()
+        self._chunks()
+
+    def _header(self) -> None:
+        self.h = read_header(self.buf)
+        self.pos = self.h.size
+        if self.h.chunks == 0:
+            raise NativeFormatError("no chunks")
+
+    def _chunks(self) -> None:
+        buf, size = self.buf, _CHUNK.size
+        while self.chunk < self.h.chunks and len(buf) - self.pos >= size:
+            a, b, level, zero, nb = _CHUNK.unpack_from(buf, self.pos)
             if zero != 0 or level > 1 or b <= a:
                 raise NativeFormatError(f"chunk header ({a}, {b}, {level}, {zero}) not understood")
-            if i == 0:
-                level_first = level
-            ch_a[i], ch_b[i], ch_off[i], ch_nb[i] = a, b, off + _CHUNK.size, nb
-            off += _CHUNK.size + nb
-    except struct.error as exc:
-        raise NativeFormatError(f"chunk headers run past the end of the file ({exc})") from exc
-    finally:
-        mv.release()
-    if off != buf.size:
-        raise NativeFormatError(f"{buf.size - off} bytes after the last chunk")
-    gap = np.flatnonzero(ch_a[1:] != ch_b[:-1])
-    if gap.size:
-        raise NativeFormatError(f"gap between chunks ({ch_b[gap[0]]} -> {ch_a[gap[0] + 1]})")
+            if nb == 0:
+                raise NativeFormatError("a chunk with an empty payload")
+            if nb > K.chunk_max_bytes:
+                raise NativeFormatError(f"a chunk of {nb} bytes")
+            if len(buf) - self.pos < size + nb:
+                return                                    # the rest of this chunk is still to come
+            if self.chunk == 0:
+                self.level_first, self.sample = level, a
+            elif a != self.next_sample:
+                raise NativeFormatError(f"gap between chunks ({self.next_sample} -> {a})")
+            self.next_sample = b
+            self.ch_len.append(b - a)
+            start = self.pos + size
+            payload = np.frombuffer(buf, np.uint8, nb, start)
+            for o, n in _pieces(payload, 0, nb):          # big chunks are cut at token starts
+                self.block.append((buf[start + o:start + o + n], self.at + start + o, self.chunk))
+                self.block_bytes += n
+                if self.block_bytes >= K.block_bytes:
+                    self._submit()
+            self.pos = start + nb
+            self.chunk += 1
 
-    # pieces: a chunk each, big chunks cut at token starts
-    big = np.flatnonzero(ch_nb > K.piece_bytes)
-    if big.size == 0:
-        p_off, p_len, p_chunk = ch_off.copy(), ch_nb.copy(), np.arange(h.chunks, dtype=np.int64)
-    else:
-        parts = {int(c): _pieces(buf, int(ch_off[c]), int(ch_nb[c])) for c in big}
-        reps = np.ones(h.chunks, np.int64)
-        reps[big] = [len(parts[int(c)]) for c in big]
-        p_chunk = np.repeat(np.arange(h.chunks, dtype=np.int64), reps)
-        p_off, p_len = np.repeat(ch_off, reps), np.repeat(ch_nb, reps)
-        first = np.cumsum(reps) - reps
-        for c, ps in parts.items():
-            p_off[first[c]:first[c] + len(ps)] = [o for o, _n in ps]
-            p_len[first[c]:first[c] + len(ps)] = [n for _o, n in ps]
-    n_pieces = p_off.size
-    p_nofirst = np.zeros(n_pieces, bool)
-    p_nofirst[0] = True                                   # the data start is not an edge
-    p_base = np.zeros(n_pieces, np.int64)
+    # -- blocks -------------------------------------------------------------
+    def _submit(self) -> None:
+        pieces, self.block, self.block_bytes = self.block, [], 0
+        ln = np.array([len(q[0]) for q in pieces], np.int64)
+        off = np.array([q[1] for q in pieces], np.int64)
+        p = np.frombuffer(pieces[0][0] if len(pieces) == 1 else b"".join(q[0] for q in pieces), np.uint8)
+        args = (p, np.cumsum(ln) - ln, off, self.first_block, int(K.mark_every))
+        self.first_block = False
+        job = self.pool.submit(_index_block, *args) if self.pool is not None else None
+        self.waiting.append((job, args, off, ln, [q[2] for q in pieces]))
+        while len(self.waiting) >= self.limit:
+            self._collect()
 
-    # one pass, about block_bytes at a time: decode, learn where each piece starts,
-    # set a mark every mark_every edges, check that every chunk adds up
-    blocks = np.flatnonzero(np.diff(np.cumsum(p_len) // K.block_bytes, prepend=-1)) if n_pieces else []
-    bounds = [*np.asarray(blocks).tolist(), n_pieces]
-    ch_len = ch_b - ch_a
-    ch_sum = np.zeros(h.chunks, np.int64)             # samples covered so far, per chunk
-    first_s = h.begin if h.begin is not None else int(ch_a[0])
-    last_s = h.end if h.end is not None else int(ch_b[-1])
-    skip = tail = seen = 0
-    level0 = level_first
-    every = int(K.mark_every)
-    m_off, m_sample, m_piece = [], [], []
-    for f, to in zip(bounds[:-1], bounds[1:]):
-        runs, tok_piece, _per, first_tok, tok_off = _runs(buf, p_off[f:to], p_len[f:to])
-        sums = np.add.reduceat(runs, first_tok)
-        ch = p_chunk[f:to]
-        # a piece starts where the earlier pieces of its chunk (this block or before) ended
-        excl = np.cumsum(sums) - sums
-        new = np.r_[True, ch[1:] != ch[:-1]]
-        group_first = np.maximum.accumulate(np.where(new, np.arange(ch.size), 0))
-        p_base[f:to] = ch_a[ch] + ch_sum[ch] + (excl - excl[group_first])
-        np.add.at(ch_sum, ch, sums)
-        ed, keep = _positions(runs, tok_piece, first_tok, p_base[f:to], p_nofirst[f:to])
-        mark = (seen + np.arange(ed.size)) % every == 0
-        m_off.append(tok_off[keep][mark])
-        m_sample.append(ed[mark])
-        m_piece.append((f + tok_piece)[keep][mark])
-        before = int(np.searchsorted(ed, first_s, side="right"))
-        skip += before
-        level0 ^= before & 1
-        tail += int(ed.size - np.searchsorted(ed, last_s, side="left"))
-        seen += ed.size
-        say(f"Indexing {100 * to // n_pieces} %")
-    bad = np.flatnonzero(ch_sum != ch_len)
-    if bad.size:
-        c = int(bad[0])
-        raise NativeFormatError(f"chunk {c}: runs add up to {ch_sum[c]} samples, not {ch_len[c]}")
-    return Index(rate=h.rate, level0=level0, first=int(first_s), last=int(last_s), skip=skip,
-                 count=seen - skip - tail, total=seen, p_off=p_off, p_len=p_len, p_base=p_base,
-                 p_nofirst=p_nofirst, m_off=np.concatenate(m_off), m_sample=np.concatenate(m_sample),
-                 m_piece=np.concatenate(m_piece))
+    def _collect(self) -> None:
+        job, args, off, ln, chunks = self.waiting.pop(0)
+        n, sums, tok, rel, at, piece, even, low = job.result() if job is not None else _index_block(*args)
+        for c, add in zip(chunks, sums.tolist()):         # every chunk's runs must add up to its length
+            if c != self.sum_chunk:
+                self._check_chunk()
+                self.sum_chunk, self.sum_so_far = c, 0
+            self.sum_so_far += add
+        first_piece = len(self.p_off)
+        self.p_off += off.tolist()
+        self.p_len += ln.tolist()
+        self.marks.append((at, self.sample + rel, first_piece + piece, self.tokens + tok - 1, even, low))
+        self.tokens += n                                  # token t starts edge t - 1
+        self.sample += int(sums.sum())
+        self.done(int(ln.sum()))
+
+    def _check_chunk(self) -> None:
+        want = self.ch_len[self.sum_chunk]
+        if self.sum_so_far != want:
+            raise NativeFormatError(f"chunk {self.sum_chunk}: runs add up to {self.sum_so_far} samples, not {want}")
+
+    def finish(self) -> Index:
+        if self.h is None:
+            self._header()
+            self._chunks()
+        if self.chunk < self.h.chunks:
+            raise NativeFormatError(f"chunk headers run past the end of the file (chunk {self.chunk} of {self.h.chunks})")
+        if len(self.buf) != self.pos:
+            raise NativeFormatError(f"{len(self.buf) - self.pos} bytes after the last chunk")
+        if self.block:
+            self._submit()
+        while self.waiting:
+            self._collect()
+        self._check_chunk()
+        cat = lambda i: np.concatenate([m[i] for m in self.marks]).astype(np.int64)      # noqa: E731
+        first = self.h.begin if self.h.begin is not None else self.next_sample - sum(self.ch_len)
+        last = self.h.end if self.h.end is not None else self.next_sample
+        return Index(rate=self.h.rate, level0=self.level_first, first=int(first), last=int(last), skip=0,
+                     count=self.tokens - 1, total=self.tokens - 1,
+                     p_off=np.array(self.p_off, np.int64), p_len=np.array(self.p_len, np.int64),
+                     m_off=cat(0), m_sample=cat(1), m_piece=cat(2), m_edge=cat(3), m_even=cat(4), m_min=cat(5))
+
+
+def set_window(raw: Path, ix: Index) -> Index:
+    """The trim window: edges at or before its start set the level, edges from its end on are dropped."""
+    buf = np.memmap(raw, dtype=np.uint8, mode="r")
+    skip = _edges_before(buf, ix, ix.first, "right")
+    ix.count = _edges_before(buf, ix, ix.last, "left") - skip
+    ix.skip, ix.level0 = skip, ix.level0 ^ (skip & 1)
+    return ix
+
+
+def build_index(raw: Path, done: Callable[[int], None] = lambda _n: None,
+                pool: ThreadPoolExecutor | None = None) -> Index:
+    """Index an unpacked channel file.  `done(n)`: n more payload bytes are indexed."""
+    indexer = Indexer(pool, done)
+    with open(raw, "rb") as f:
+        while block := f.read(K.copy_chunk_bytes):
+            indexer.feed(block)
+    return set_window(raw, indexer.finish())
 
 
 # ----------------------------------------------------------- lazy times
@@ -416,7 +594,9 @@ class LazyTimes:
     def __init__(self, raw: Path, index: Index, shift: int = 0) -> None:
         self.raw, self.ix, self.shift = raw, index, shift          # shift: samples before t = 0
         self._buf: np.memmap | None = None
+        self._edge = np.append(index.m_edge, index.total)          # edge number at each mark, then the end
         self._mark_t = (index.m_sample - shift) / index.rate
+        self._blocks = None
         self.shape = (index.count,)
         self.dtype = np.dtype(np.float64)
         self.ndim = 1
@@ -424,43 +604,14 @@ class LazyTimes:
     def __len__(self) -> int:
         return self.ix.count
 
-    def _span(self, m0: int, m1: int) -> tuple[list[int], list[int], list[int]]:
-        """Payload pieces (offset, length, base sample) holding decoded edges [m0, m1) * mark_every."""
-        ix = self.ix
-        j0, o0, base0 = int(ix.m_piece[m0]), int(ix.m_off[m0]), int(ix.m_sample[m0])
-        if m1 < ix.m_off.size:
-            j1, o1 = int(ix.m_piece[m1]), int(ix.m_off[m1])
-        else:
-            j1 = ix.p_off.size - 1
-            o1 = int(ix.p_off[j1] + ix.p_len[j1])
-        if j0 == j1:
-            return [o0], [o1 - o0], [base0]
-        off = [o0, *ix.p_off[j0 + 1:j1 + 1].tolist()]
-        ln = [int(ix.p_off[j0] + ix.p_len[j0]) - o0, *ix.p_len[j0 + 1:j1].tolist(), o1 - int(ix.p_off[j1])]
-        base = [base0, *ix.p_base[j0 + 1:j1 + 1].tolist()]
-        if ln[-1] == 0:
-            off, ln, base = off[:-1], ln[:-1], base[:-1]
-        return off, ln, base
+    def _stretch(self, d: int) -> int:
+        return int(np.searchsorted(self._edge, d, side="right")) - 1
 
     def _decode_spans(self, spans: list[tuple[int, int]]) -> list[np.ndarray]:
-        """Times for several [m0, m1) mark ranges, decoded in one vectorised pass."""
+        """Times for several [m0, m1) stretch ranges."""
         if self._buf is None:
             self._buf = np.memmap(self.raw, dtype=np.uint8, mode="r")
-        ix, every = self.ix, int(K.mark_every)
-        off, ln, base, want = [], [], [], []
-        for m0, m1 in spans:
-            o, n, b = self._span(m0, m1)
-            off += o
-            ln += n
-            base += b
-            want.append(min(m1 * every, ix.total) - m0 * every)
-        runs, tok_piece, _per, first_tok, _o = _runs(self._buf, np.array(off), np.array(ln))
-        samples, _keep = _positions(runs, tok_piece, first_tok, np.array(base, np.int64),
-                                    np.zeros(len(off), bool))
-        if samples.size != sum(want):
-            raise NativeFormatError(f"decoded {samples.size} edges between marks, expected {sum(want)}")
-        times = (samples - self.shift) / ix.rate
-        return np.split(times, np.cumsum(want)[:-1])
+        return [(s - self.shift) / self.ix.rate for s in decode_samples(self._buf, self.ix, spans)]
 
     def _marks(self, ms) -> dict[int, np.ndarray]:
         """Decoded stretches for these marks: cached ones reused, the rest decoded together."""
@@ -480,14 +631,14 @@ class LazyTimes:
         return self._marks([m])[m]
 
     def __getitem__(self, key):
-        n, every, skip = self.ix.count, int(K.mark_every), self.ix.skip
+        n, skip = self.ix.count, self.ix.skip
         if isinstance(key, slice):
             start, stop, step = key.indices(n)
             if step != 1:
                 raise IndexError("LazyTimes supports contiguous slices only")
             if stop <= start:
                 return np.empty(0, np.float64)
-            m0, m1 = (start + skip) // every, (stop - 1 + skip) // every + 1
+            m0, m1 = self._stretch(start + skip), self._stretch(stop - 1 + skip) + 1
             if m1 - m0 <= K.cache_span_marks:
                 got = self._marks(range(m0, m1))
                 arr = np.concatenate([got[m] for m in range(m0, m1)])
@@ -495,14 +646,15 @@ class LazyTimes:
                 step = int(K.batch_marks)
                 arr = np.concatenate([self._decode_spans([(m, min(m + step, m1))])[0]
                                       for m in range(m0, m1, step)])
-            return arr[start + skip - m0 * every:stop + skip - m0 * every].copy()
+            a = start + skip - int(self._edge[m0])
+            return arr[a:a + stop - start].copy()
         i = int(key)
         if i < 0:
             i += n
         if not 0 <= i < n:
             raise IndexError(f"edge {key} of {n}")
-        d = i + skip
-        return self._mark(d // every)[d % every]
+        m = self._stretch(i + skip)
+        return self._mark(m)[i + skip - int(self._edge[m])]
 
     def marks_in(self, grid: np.ndarray) -> np.ndarray:
         """Marks strictly inside each (grid[j], grid[j+1]): every one is an edge there.
@@ -522,16 +674,28 @@ class LazyTimes:
         out = np.zeros(vals.size, np.int64)
         if self.ix.total:
             marks = np.searchsorted(self._mark_t, vals, side=side) - 1      # -1: before every edge
-            every = int(K.mark_every)
-            need = np.unique(marks[marks >= 0]).tolist()
+            order = np.argsort(marks, kind="stable")
+            need, starts = np.unique(marks[order], return_index=True)
+            ends = [*starts[1:].tolist(), order.size]
             got = {}
-            for i in range(0, len(need), int(K.batch_marks)):
-                got.update(self._marks(need[i:i + int(K.batch_marks)]))
-            for m in need:
-                sel = marks == m
-                out[sel] = m * every + np.searchsorted(got[m], vals[sel], side=side)
+            wanted = need[need >= 0].tolist()
+            for i in range(0, len(wanted), int(K.batch_marks)):
+                got.update(self._marks(wanted[i:i + int(K.batch_marks)]))
+            for m, a, b in zip(need.tolist(), starts.tolist(), ends):
+                if m >= 0:
+                    sel = order[a:b]
+                    out[sel] = int(self._edge[m]) + np.searchsorted(got[m], vals[sel], side=side)
         out = np.clip(out - self.ix.skip, 0, self.ix.count)
         return int(out[0]) if scalar else out
+
+    def pulses(self, i0: int, i1: int) -> tuple[float, float, float | None]:
+        """capture.pulse_stats for edges i0 .. i1 - 1, from the index: whole
+        stretches cost nothing, only the two ends are decoded."""
+        if self._blocks is None:
+            ix = self.ix
+            self._blocks = (self._edge - ix.skip, ix.m_even / ix.rate,
+                            np.diff(ix.m_sample, append=ix.m_sample[-1:]) / ix.rate, ix.m_min / ix.rate)
+        return pulse_stats(self, i0, i1, self._blocks)
 
     def __array__(self, dtype=None, copy=None):
         arr = self[0:self.ix.count]
@@ -561,9 +725,21 @@ def time_shift(meta_data: dict) -> float:
     raise NativeFormatError(f"time origin {t0!r} is not known to this reader")
 
 
+def workers() -> int:
+    """Threads for unpacking and indexing: the PC's cores, up to max_workers."""
+    return max(1, min(int(K.max_workers), os.cpu_count() or 1))
+
+
 def unpack(sal: Path, dest: Path, wanted: list[int] | None,
            say: Callable[[str], None] = lambda _m: None) -> None:
-    """Inflate each channel file once and index it (constant memory)."""
+    """Inflate each channel file once and index it (constant memory).
+
+    Channels are inflated side by side (zlib releases the GIL) and every
+    channel's index blocks go to one shared pool, so a PC's cores are used
+    whether the capture has one busy channel or sixteen.  A channel is indexed
+    while it is being inflated, so opening takes about as long as the
+    inflating alone.
+    """
     try:
         z = zipfile.ZipFile(sal)
     except zipfile.BadZipFile as exc:
@@ -574,26 +750,65 @@ def unpack(sal: Path, dest: Path, wanted: list[int] | None,
         if not chans:
             raise NativeFormatError("no digital channel files in the .sal")
         meta = json.loads(z.read("meta.json")).get("data") or {}
-        shift = time_shift(meta)
-        glitch = ((meta.get("legacySettings") or meta.get("settings") or {}).get("glitchFilter") or {})
-        if glitch.get("enabled"):
-            raise NativeFormatError("Logic 2's glitch filter is on for this capture")
-        total = sum(found[c].file_size for c in chans)
-        done = 0
-        for c in chans:
-            info = found[c]
-            out = dest / f"digital-{c}.raw"
-            with z.open(info) as src, open(out, "wb") as dst:
-                while True:
-                    block = src.read(K.copy_chunk_bytes)
-                    if not block:
-                        break
-                    dst.write(block)
-                    done += len(block)
-                    say(f"Unpacking {done / 1e6:,.0f} of {total / 1e6:,.0f} MB")
-            ix = build_index(out, say)
-            ix.save(dest / f"digital-{c}.{_INDEX}")
-        (dest / "native.json").write_text(json.dumps({"channels": chans, "shift_s": shift}), encoding="utf-8")
+    shift = time_shift(meta)
+    glitch = ((meta.get("legacySettings") or meta.get("settings") or {}).get("glitchFilter") or {})
+    if glitch.get("enabled"):
+        raise NativeFormatError("Logic 2's glitch filter is on for this capture")
+
+    total = 2 * sum(found[c].file_size for c in chans)        # every byte is inflated, then indexed
+    lock = threading.Lock()
+    state = {"done": 0, "shown": -1}
+
+    stop = threading.Event()                                  # one channel failed: the others give up
+
+    def progress(n: int) -> None:
+        if stop.is_set():
+            raise _Stopped
+        with lock:
+            state["done"] += n
+            pct = 100 * state["done"] // max(total, 1)
+            if pct == state["shown"]:
+                return
+            state["shown"] = pct
+        say(f"Reading {pct} %  ({total / 2e6:,.0f} MB)")       # also where a cancelled load stops
+
+    n = workers()
+    blocks = ThreadPoolExecutor(n, thread_name_prefix="sal-index")
+
+    def one(c: int) -> None:
+        out = dest / f"digital-{c}.raw"
+        indexer = Indexer(blocks, progress)
+        with zipfile.ZipFile(sal) as own, own.open(found[c]) as src, open(out, "wb") as dst:
+            while True:
+                block = src.read(K.copy_chunk_bytes)
+                if not block:
+                    break
+                dst.write(block)
+                progress(len(block))
+                indexer.feed(block)                           # indexed as it arrives, on the pool
+        ix = indexer.finish()
+        progress(found[c].file_size - sum(ix.p_len.tolist()))      # headers: not payload, but counted
+        set_window(out, ix).save(dest / f"digital-{c}.{_INDEX}")
+
+    failed: list[BaseException] = []
+
+    def guarded(c: int) -> None:
+        try:
+            one(c)
+        except _Stopped:
+            pass
+        except BaseException as exc:                          # unknown layout, cancelled, disk full ...
+            failed.append(exc)
+            stop.set()
+
+    try:
+        with ThreadPoolExecutor(min(n, len(chans)), thread_name_prefix="sal-unpack") as pool:
+            list(pool.map(guarded, chans))
+    finally:
+        blocks.shutdown(wait=True, cancel_futures=True)
+    if failed:
+        raise failed[0]
+    (dest / "native.json").write_text(json.dumps({"channels": chans, "shift_s": shift}), encoding="utf-8")
 
 
 def open_folder(folder: Path) -> tuple[dict[int, tuple[Segment, Index]], float]:

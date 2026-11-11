@@ -58,6 +58,8 @@ Big captures
   exported through Logic 2; the Coverage tab then says so.
 
 Status
+  0.4.0: a .sal opens about 10 times faster the first time; Compare shows
+         its result at once, also on very large captures.
   0.3.1: big binary exports no longer copied into RAM per search; the page
          says when Edge Bench has stopped.
   0.3.0: in-place updates and rollback (see Updating).

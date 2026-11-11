@@ -291,6 +291,85 @@ test("compare: the planted firmware differences are found", async ({ page }, inf
   await page.screenshot({ path: `${SHOTS}/${info.project.name}-05-compare-detail.png` });
 });
 
+test("compare: two .sal captures, by their own channel names", async ({ page }, info) => {
+  // Old and new firmware of one board, both read directly from the .sal.
+  await page.goto("/");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  for (const name of ["board_a.sal", "board_b.sal"]) {
+    await page.locator("[data-test=path-input]").fill(path.join(FIX, name));
+    await page.locator("[data-test=path-input]").press("Enter");
+    await expect(page.locator("[data-test=file-item]", { hasText: name })).toContainText("100 MS/s", { timeout: 20_000 });
+  }
+  await page.locator("[data-test=mode] button", { hasText: "Compare" }).click();
+  await page.locator("[data-test=ref-channel]").selectOption({ label: "D4 · PWR_GOOD" });
+  await expect(page.locator("[data-test=compare-summary]")).toHaveText(/2\s*critical\s*1\s*changed\s*5\s*same/, { timeout: 20_000 });
+  await expect(page.locator("[data-test=cmp-row-6]")).toContainText("PLL_LOCK");
+  await expect(page.locator("[data-test=cmp-row-6]")).toContainText("Edge disappeared");
+  await expect(page.locator("[data-test=cmp-row-3]")).toContainText("PWM_FAN");
+  await expect(page.locator("[data-test=cmp-row-3]")).toContainText("Edge count 9600 → 7799");
+  await expect(page.locator("[data-test=cmp-delta-5]")).toHaveText("+20 µs");          // RESET_N: moved, inside tolerance
+  await expect(page.locator("[data-test=cmp-row-5]")).toContainText("Same");
+  await expect(page.locator("[data-test=compare-busy]")).toHaveCount(0);
+  await expect(page.locator("[data-test=compare-status]")).toHaveCount(0);
+  await page.waitForTimeout(400);                                              // both waveforms drawn
+  await page.screenshot({ path: `${SHOTS}/${info.project.name}-16-compare-sal.png` });
+  await axe(page);
+});
+
+test("compare: a slow answer shows the measured edges first, and says what is still coming", async ({ page }) => {
+  // The first full comparison of a very large binary export reads it through once.
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route("**/api/compare", async (r) => {
+    if (JSON.parse(r.request().postData() ?? "{}").activity !== false) await held;
+    await r.continue();
+  });
+  await page.goto("/");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  for (const p of [POWER, NEW_FW]) {
+    await page.locator("[data-test=path-input]").fill(p);
+    await page.locator("[data-test=path-input]").press("Enter");
+    await expect(page.locator("[data-test=file-item]", { hasText: path.basename(p) })).toContainText("CSV", { timeout: 20_000 });
+  }
+  await page.locator("[data-test=mode] button", { hasText: "Compare" }).click();
+  await expect(page.locator("[data-test=compare-busy]")).toContainText("Comparing A and B");
+  await expect(page.locator("[data-test=compare-status]")).toHaveText("Comparing…");
+  // the quick answer: the edges are compared, activity is not there yet
+  await expect(page.locator("[data-test=compare-pending]")).toContainText("Only the measured edges are compared so far");
+  await expect(page.locator("[data-test=compare-status]")).toContainText("still checking activity");
+  await expect(page.locator("[data-test=compare-busy]")).toHaveCount(0);
+  await expect(page.locator("[data-test=cmp-delta-1]")).toHaveText("+500 µs");
+  await axe(page);
+  await page.locator("[data-test=cmp-row-3]").click();
+  await expect(page.locator("[data-test=reasons]")).toContainText("Edge disappeared");
+  await expect(page.locator("[data-test=reasons]")).not.toContainText("Activity stopped");
+  await expect(page.locator("[data-test=compare-evidence]")).toContainText("Edges in span——");   // not counted yet
+  release();
+  await expect(page.locator("[data-test=reasons]")).toContainText("Activity stopped");            // the full answer
+  await expect(page.locator("[data-test=compare-status]")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-test=compare-pending]")).toHaveCount(0);
+  await expect(page.locator("[data-test=compare-summary]")).toHaveText(/2\s*critical\s*3\s*changed\s*3\s*same/);
+});
+
+test("compare: an error is said, not a spinner forever", async ({ page }) => {
+  await page.route("**/api/compare", (r) => r.fulfill({ status: 422, json: { detail: "The reference channel is not in capture B." } }));
+  await page.goto("/");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  for (const p of [POWER, NEW_FW]) {
+    await page.locator("[data-test=path-input]").fill(p);
+    await page.locator("[data-test=path-input]").press("Enter");
+    await expect(page.locator("[data-test=file-item]", { hasText: path.basename(p) })).toContainText("CSV", { timeout: 20_000 });
+  }
+  await page.locator("[data-test=mode] button", { hasText: "Compare" }).click();
+  await expect(page.locator("[data-test=compare-error]")).toContainText("The reference channel is not in capture B.");
+  await expect(page.locator("[data-test=compare-busy]")).toHaveCount(0);
+  for (let i = errors.length - 1; i >= 0; i--) if (errors[i].includes("Failed to load resource")) errors.splice(i, 1);
+});
+
 test("compare: swap, tolerance and back to measure", async ({ page }) => {
   await openPair(page);
   await page.locator("[data-test=swap]").click();

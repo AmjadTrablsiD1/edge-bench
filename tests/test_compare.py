@@ -244,3 +244,48 @@ def test_span_metrics_do_not_hold_the_whole_span_in_memory(tmp_path, monkeypatch
     assert edges == 2_000_000
     assert duty == pytest.approx(0.1, abs=1e-6) and shortest == pytest.approx(1e-7, abs=1e-12)
     assert peak < 8_000_000
+
+
+@pytest.mark.parametrize("unaligned", [True, False], ids=["v0 (unaligned)", "aligned"])
+def test_a_large_binary_span_is_answered_from_its_summary(unaligned, tmp_path, monkeypatch):
+    """Big binary exports: a summary per block, built once; then no span reads the channel again."""
+    from app.capture import pulse_stats
+    monkeypatch.setitem(C.compare, "summary_min_edges", 500)
+    monkeypatch.setitem(C.compare, "summary_block_edges", 64)
+    monkeypatch.setitem(C.compare, "span_chunk_edges", 1000)
+    rng = np.random.default_rng(8)
+    t = np.cumsum(rng.uniform(1e-8, 1e-5, 20_001))
+    if unaligned:
+        synth.write_v0(tmp_path / "digital_0.bin", 1, 0.0, float(t[-1]) + 1, t)
+        times = binary.load(tmp_path).channel(0).segments[0].times
+        assert not times.flags.aligned
+    else:
+        (tmp_path / "t.bin").write_bytes(t.astype("<f8").tobytes())
+        times = binary.MappedTimes(tmp_path / "t.bin", dtype="<f8", mode="r")
+    reads = []
+    real = binary.MappedTimes.__getitem__
+    monkeypatch.setattr(binary.MappedTimes, "__getitem__", lambda self, k: (reads.append(k), real(self, k))[1])
+    spans = [(0, t.size), (1, t.size - 1), (63, 64 * 9 + 1), (64, 64 * 30), (5000, 5600), (100, 300)]
+    spans += [tuple(sorted(rng.integers(0, t.size + 1, 2).tolist())) for _ in range(30)]
+    for n, (i0, i1) in enumerate(spans):
+        reads.clear()
+        odd, total, low = times.pulses(i0, i1)
+        if n and i1 - i0 >= 500:                               # the summary exists: only the two ends are read
+            assert sum(k.stop - k.start for k in reads if isinstance(k, slice)) <= 2 * 64 + 4
+        w_odd, w_total, w_low = pulse_stats(t, i0, i1)
+        assert odd == pytest.approx(w_odd, rel=1e-9, abs=1e-15) and total == pytest.approx(w_total, rel=1e-9, abs=1e-15)
+        assert (low is None and w_low is None) or low == pytest.approx(w_low, abs=1e-13)
+
+
+def test_quick_compare_looks_at_the_measured_edges_only(pair):
+    a, b = pair
+    quick = compare(a, b, Settings(ref_channel=0), activity=False)
+    full = compare(a, b, Settings(ref_channel=0))
+    assert quick.activity is False and full.activity is True
+    assert quick.as_dict()["activity"] is False
+    for q, f in zip(quick.rows, full.rows):
+        assert (q.a.dt, q.b.dt, q.a.edge, q.a.level_at_ref, q.a.first_pulse) == (f.a.dt, f.b.dt, f.a.edge, f.a.level_at_ref, f.a.first_pulse)
+        assert q.a.edges is None and q.a.duty is None and q.b.min_pulse is None
+        assert f.a.edges is not None
+        assert {r.metric for r in q.reasons} == {r.metric for r in f.reasons} - {"edges", "duty", "min_pulse"}
+    assert quick.span_s == full.span_s

@@ -18,15 +18,17 @@ from __future__ import annotations
 
 import re
 import struct
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from app.capture import Capture, Channel, Segment
+from app.capture import Capture, Channel, Segment, pulse_stats
 from app.constants import C
 
 MAGIC = C.binary.magic.encode("ascii")
+_SUMMARY_LOCK = threading.Lock()
 _HEAD = struct.Struct("<8sii")          # magic, version, type      -> 16 bytes
 _V0 = struct.Struct("<IddQ")            # initial, begin, end, n    -> 28 bytes
 _V1_COUNT = struct.Struct("<Q")         # chunk_count               ->  8 bytes
@@ -125,6 +127,31 @@ class MappedTimes(np.memmap):
             lo[live[go]] = mid[go] + 1
             hi[live[~go]] = mid[~go]
         return lo.reshape(wanted.shape) if wanted.ndim else lo[0]
+
+    _summary = None                                  # per-block pulse summary, built on first use
+
+    def pulses(self, i0: int, i1: int):
+        """capture.pulse_stats for edges i0 .. i1 - 1.
+
+        A long span is answered from a summary of the whole channel (three
+        numbers per summary_block_edges edges), built once by reading the
+        file through in chunks -- after that any span, reference or tolerance
+        costs nothing.  A short span is simply read.
+        """
+        if i1 - i0 < C.compare.summary_min_edges:
+            return pulse_stats(self, i0, i1)
+        with _SUMMARY_LOCK:
+            if self._summary is None:
+                size = int(C.compare.summary_block_edges)
+                k = (len(self) - 1) // size
+                odd, total, low = np.empty(k), np.empty(k), np.empty(k)
+                rows = max(1, int(C.compare.span_chunk_edges) // size)
+                for a in range(0, k, rows):
+                    b = min(a + rows, k)
+                    gaps = np.diff(np.asarray(self[a * size:b * size + 1], dtype=float)).reshape(b - a, size)
+                    odd[a:b], total[a:b], low[a:b] = gaps[:, ::2].sum(axis=1), gaps.sum(axis=1), gaps.min(axis=1)
+                self._summary = (np.arange(k + 1, dtype=np.int64) * size, odd, total, low)
+        return pulse_stats(self, i0, i1, self._summary)
 
 
 def load_segments(path: Path) -> tuple[list[Segment], BinHeader]:

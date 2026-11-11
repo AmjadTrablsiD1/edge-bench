@@ -22,6 +22,7 @@ function detail(f: FileEntry): string {
   if (f.status !== "ready") return f.step || (f.status === "queued" ? "Waiting" : "Loading");
   const c = f.capture!;
   const parts = [c.device ?? c.source.toUpperCase(), rate(c.sample_rate), `${c.channels.length} ch`];
+  if (c.via === "logic2-export") parts.push("via Logic 2 export");
   if (f.load_s !== null && f.load_s > 0.05) parts.push(`${num(f.load_s)} s`);
   return parts.join(" · ");
 }

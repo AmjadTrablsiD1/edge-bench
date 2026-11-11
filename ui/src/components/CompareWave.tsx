@@ -16,6 +16,7 @@ interface Props {
   aId: number; bId: number;
   capA: CaptureSummary; capB: CaptureSummary;
   cmp: Comparison | null;
+  busy: boolean;                    // the comparison is being worked out
   view: View;                       // relative to each reference
   setView: (v: View) => void;
   selected: number | null;
@@ -259,7 +260,8 @@ export function CompareWave(p: Props) {
           }
         }}
         onPointerLeave={() => hover(null)} />
-      {!p.cmp && <div className="viewport-loading" aria-hidden="true" />}
+      {p.busy && <div className="viewport-loading" aria-hidden="true" />}
+      {p.busy && <div className="viewport-note" data-test="compare-busy"><span className="spinner small" aria-hidden="true" /> Comparing A and B…</div>}
     </div>
   );
 }

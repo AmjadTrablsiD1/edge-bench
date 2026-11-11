@@ -273,6 +273,7 @@ class CompareReq(BaseModel):
     tolerance: dict | None = None
     span_s: float | None = None
     match: str = C.compare.default_match
+    activity: bool = True
 
 
 def _compare(req: CompareReq) -> compare.Comparison:
@@ -288,7 +289,8 @@ def _compare(req: CompareReq) -> compare.Comparison:
     try:
         if req.match not in C.compare.match_modes:
             raise ValueError(f"channel matching must be one of {C.compare.match_modes}")
-        return compare.compare(a.capture, b.capture, _settings(req.settings), tol, req.span_s, req.match)
+        return compare.compare(a.capture, b.capture, _settings(req.settings), tol, req.span_s, req.match,
+                               req.activity)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except KeyError as exc:

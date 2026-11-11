@@ -20,8 +20,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import numpy as np
-
 from app.capture import Channel, Segment
 from app.constants import C
 

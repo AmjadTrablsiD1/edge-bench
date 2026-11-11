@@ -129,6 +129,7 @@ def load(path: Path, *, logic2=None, progress=None, native: bool = True, **_) ->
             why = str(exc)
             log.warning("%s: direct read not possible (%s); using the Logic 2 export", path.name, why)
     cap = _load_export(path, meta, logic2, progress)
+    cap.via = "logic2-export"
     if why:
         cap.notes.append(f"Read through a Logic 2 export: the direct reader does not know this file ({why}).")
     return cap

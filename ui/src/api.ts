@@ -48,8 +48,9 @@ export const api = {
     post<{ path: string; captures: number; skipped: string[] }>("export", { file_ids, settings, unit, path }),
   reveal: (path: string) => post<{ ok: boolean }>("reveal", { path }),
   setLogic2: (path: string | null) => post<AppStatus["logic2"]>("settings/logic2", { path }),
-  compare: (a_id: number, b_id: number, settings: Settings, tolerance: Tolerance, span_s: number | null, match: MatchBy) =>
-    post<Comparison>("compare", { a_id, b_id, settings, tolerance, span_s, match }),
+  // activity=false: the measured edges only (instant); true adds edge counts, time high, shortest pulse
+  compare: (a_id: number, b_id: number, settings: Settings, tolerance: Tolerance, span_s: number | null, match: MatchBy, activity = true) =>
+    post<Comparison>("compare", { a_id, b_id, settings, tolerance, span_s, match, activity }),
   exportCompare: (a_id: number, b_id: number, settings: Settings, tolerance: Tolerance, span_s: number | null, match: MatchBy, unit: string, path: string) =>
     post<{ path: string; captures: number; skipped: string[] }>("export/compare", { a_id, b_id, settings, tolerance, span_s, match, unit, path }),
   quit: () => post<{ ok: boolean }>("quit", {}),

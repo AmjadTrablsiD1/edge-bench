@@ -8,6 +8,7 @@ export interface CaptureSummary {
   sample_rate: number | null;
   resolution_s: number | null;
   format_version: number | null;
+  via: string | null;           // "logic2-export": a .sal the direct reader did not know
   begin: number;
   end: number;
   channels: ChannelSummary[];
@@ -122,4 +123,5 @@ export interface Comparison {
   verdict_labels: Record<Verdict, string>;
   status_labels: Record<string, string>;
   compute_s: number;
+  activity: boolean;            // false: only the measured edges are compared so far
 }

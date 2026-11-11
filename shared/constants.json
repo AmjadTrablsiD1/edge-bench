@@ -277,7 +277,10 @@
       "name"
     ],
     "default_match": "number",
-    "span_chunk_edges": 4000000
+    "span_chunk_edges": 4000000,
+    "summary_block_edges": 4096,
+    "summary_min_edges": 2000000,
+    "quick_show_ms": 400
   },
   "guard": {
     "_comment": "Edge Bench stops itself before it can take the PC down: if its own private memory passes this share of the physical RAM it writes crash.log, says why and exits. Memory-mapped capture files do not count (they are file-backed and the OS can drop them).",
@@ -285,7 +288,7 @@
     "interval_s": 1.0
   },
   "sal_native": {
-    "_comment": "Direct .sal reader (app/readers/sal_native.py). Logic 2's own channel files: undocumented, decoded from Logic 2.4.48 files and checked against its binary exports. Anything else falls back to the Logic 2 export. Decoding needs ~150x its input in temporary arrays, so it works on pieces and blocks of 256 kB and on at most batch_marks marks at a time.",
+    "_comment": "Direct .sal reader (app/readers/sal_native.py). Logic 2's own channel files: undocumented, decoded from Logic 2.4.48 files and checked against its binary exports. Anything else falls back to the Logic 2 export. Decoding needs ~30x its input in temporary arrays, so it works on pieces and blocks of 256 kB and on at most batch_marks marks at a time. Blocks are indexed on up to max_workers threads.",
     "magic": "<SALEAE>",
     "version": 4,
     "type": 100,
@@ -297,7 +300,12 @@
     "decoded_cache_mb": 256,
     "max_token_bytes": 9,
     "copy_chunk_bytes": 1048576,
-    "cache_kind": "native-2",
+    "cache_kind": "native-3",
+    "max_workers": 6,
+    "header_max_bytes": 128,
+    "chunk_max_bytes": 268435456,
+    "pair_rounds": 8,
+    "pair_slices": 4096,
     "mark_every": 4096,
     "cache_span_marks": 8,
     "batch_marks": 64

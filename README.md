@@ -127,8 +127,8 @@ along with the Logic 2 it started.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 cd ui && npm install && npm run build && cd ..
-.venv/bin/python -m pytest -q          # core, API, compare, .sal reader, updater (170)
-npm install && npx playwright test     # real UI, both themes, axe, fold probe (32)
+.venv/bin/python -m pytest -q          # core, API, compare, .sal reader, updater (216)
+npm install && npx playwright test     # real UI, both themes, axe, fold probe (38)
 .venv/bin/python main.py               # run from the repo
 ```
 
@@ -150,6 +150,24 @@ Logic 2 does, without Logic 2 and without an export. Each channel is unpacked
 once into the cache. That takes about 1 to 3 bytes per edge on disk (the
 binary export takes 8). From then on, only the part a measurement or the
 screen needs is decoded: a 100-million-edge channel was measured in 12 ms.
+
+Opening a `.sal` for the first time is the only pass over all of its data.
+Since 0.4.0 each channel is indexed while it is being unpacked, on several CPU
+cores. Measured on an 8-core Mac (a work PC will differ):
+
+| Capture | First open, 0.3.1 | First open, 0.4.0 | Open again | Compare A ↔ B |
+|---|---|---|---|---|
+| 60 million edges (72 MB unpacked) | 6.3 s | 0.6 s | 8 ms | 13 s → 16 ms |
+| 1.2 billion edges (1.5 GB unpacked; 9.6 GB as a binary export) | about 130 s | 12 s | 16 ms | minutes → 9 ms |
+
+Memory stayed near 200 MB for both. Unpacking the zip is now the larger part
+of the first open; nothing in Edge Bench can make that part faster.
+
+Compare no longer reads every edge of both captures: the index keeps two
+numbers per 4096 edges (time in every second pulse, shortest pulse), and a span
+is added up from those. A large binary export gets the same summary the first
+time it is compared (one read through the file); until that is done the table
+already shows the measured edges.
 The format is not documented by Saleae. It was decoded from Logic 2.4.48 and
 is checked against Logic 2's own exports (see ARCHITECTURE.md). A file it does
 not recognise is exported through Logic 2 as before, and the capture's notes

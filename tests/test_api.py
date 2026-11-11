@@ -89,6 +89,10 @@ def test_compare_and_export(tmp_path):
     c = r.json()
     assert c["summary"]["critical"] == 2 and c["summary"]["changed"] == 3 and c["summary"]["same"] == 3
     assert {row["index"]: row["verdict"] for row in c["rows"]}[3] == "critical"
+    assert c["activity"] is True and c["rows"][0]["a"]["edges"] is not None
+    quick = client.post("/api/compare", json={**body, "activity": False}).json()
+    assert quick["activity"] is False and all(row["a"]["edges"] is None for row in quick["rows"] if row["a"])
+    assert [row["dt_delta"] for row in quick["rows"]] == [row["dt_delta"] for row in c["rows"]]
 
     bad = client.post("/api/compare", json={**body, "b_id": ids[0]})
     assert bad.status_code == 422 and "two different" in bad.json()["detail"]

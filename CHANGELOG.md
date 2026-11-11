@@ -4,6 +4,12 @@ What changed in each version, newest first. The app shows these sections as
 "What's new" before an update. Each heading is `## <version> — <date>`, and the
 bullets underneath are written for the people who use Edge Bench.
 
+## 0.4.0 — 2026-11-11
+- A .sal capture opens about 10 times faster the first time (1.2 billion edges: 12 s, was about 130 s), with the same low memory. Opening it again is still instant.
+- Compare shows its result at once, also on very large captures. Before, it could take minutes and the screen showed only the two signals.
+- While a comparison is being worked out the screen says so, and an error is shown where the result would be.
+- The capture list says when a .sal had to go through a Logic 2 export.
+
 ## 0.3.1 — 2026-11-08
 - Large binary exports measure and draw quickly without copying the whole channel into memory (a 2 GB channel: 2.2 GB → 0.3 GB, seconds → instant).
 - If Edge Bench stops (for example its memory guard ends it), the page now says so instead of going quiet.

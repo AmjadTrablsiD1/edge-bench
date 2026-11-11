@@ -197,12 +197,21 @@ export default function App() {
       setCmp(null); return;
     }
     setCmp((c) => (c && c.file_a === fileA?.path && c.file_b === fileB?.path ? c : null));
+    // Two answers: the measured edges (instant on any capture) and the full one
+    // with activity over the span.  The quick one is shown only if the full one
+    // is not there after quick_show_ms -- the first full comparison of a very
+    // large binary export reads it through once.
+    let full = false, show = 0;
     const t = window.setTimeout(() => {
+      setCmpError(null);
+      api.compare(aId, bId, settings, tolerance, span_s, form.matchBy, false)
+        .then((c) => { show = window.setTimeout(() => { if (id === compareReq.current && !full) setCmp(c); }, C.compare.quick_show_ms); })
+        .catch(() => {});
       api.compare(aId, bId, settings, tolerance, span_s, form.matchBy)
-        .then((c) => { if (id === compareReq.current) { setCmp(c); setCmpError(null); } })
-        .catch((e) => { if (id === compareReq.current) { setCmp(null); setCmpError(e.message); } });
+        .then((c) => { full = true; if (id === compareReq.current) { setCmp(c); setCmpError(null); } })
+        .catch((e) => { full = true; if (id === compareReq.current) { setCmp(null); setCmpError(e.message); } });
     }, 150);
-    return () => window.clearTimeout(t);
+    return () => { window.clearTimeout(t); window.clearTimeout(show); };
   }, [comparing, cmpKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cmpFocusKey = cmp ? `${aId}|${bId}|${cmp.rows.map((r) => `${r.a?.dt}/${r.b?.dt}`).join(",")}` : `${aId}|${bId}`;
@@ -407,6 +416,11 @@ export default function App() {
                 </select>
               </label>
               <div className="toolbar-spacer" />
+              {fileA && fileB && !cmpError && !(cmp && cmp.activity) && (
+                <span className="toolbar-caption" data-test="compare-status" role="status">
+                  {!cmp ? "Comparing…" : "Edges compared · still checking activity over the span…"}
+                </span>
+              )}
               {cmp && (
                 <>
                   <button className="ghost-btn" onClick={() => setCview(compareFocus(cmp))} title="R"><Icon name="target" /> Edges</button>
@@ -415,7 +429,7 @@ export default function App() {
               )}
             </div>
             {fileA && fileB && capA && capB ? (
-              <CompareWave aId={fileA.id} bId={fileB.id} capA={capA} capB={capB} cmp={cmp} view={cview} setView={setCview}
+              <CompareWave aId={fileA.id} bId={fileB.id} capA={capA} capB={capB} cmp={cmp} busy={!cmp && !cmpError} view={cview} setView={setCview}
                 selected={selectedCh} onSelect={setSelectedCh} theme={theme} />
             ) : (
               <div className="viewport empty-state" data-test="compare-empty">
