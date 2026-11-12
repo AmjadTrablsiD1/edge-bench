@@ -173,6 +173,25 @@ lengths, which add up to exactly `b - a`. Each run is 1 to 9 bytes, big-endian,
   - Measured on an 8-core Mac: 1.2 billion edges (1.5 GB unpacked) in 12 s at
     about 200 MB peak RSS; 0.3.1 needed about 130 s. Unpacking the zip is now
     the larger part.
+- **Compiled loops are optional and never trusted blindly** (`sal_fast`, `_sal_kernels`, 0.5.0):
+  - `requirements-fast.txt` (numba) is not a requirement. `updater.ensure_optional`
+    installs it with the main list as a constraint, once, and a failure never
+    fails an update or a start. `sal_native._tokens` and `_index_block` ask
+    `sal_fast.kernels()` for every block; `None` means numpy.
+  - Before first use, `_self_test` holds both loops against the numpy code:
+    every token length, pieces, both mark spacings, and every byte sequence the
+    grammar forbids. Planted in the loops, 18 of 18 bugs were refused by that
+    self-test alone. A failure, a compile error or an unexpected exception while
+    running switches them off for the session, and numpy redoes that block.
+  - The loops are bounds-checked (`boundscheck=True`, about 20 % slower): a
+    damaged file can make them return an error code, not touch memory outside
+    their arrays.
+  - Every reader test runs with both engines (`engine` fixture), and
+    `tests/test_fast.py` compares the two on all recorded captures and on
+    random bytes. When you change the grammar or the index layout, change
+    **both** `_tokens_numpy` / `_index_block_numpy` and `_sal_kernels.py`.
+  - A GPU was considered and measured against: it could only take this same
+    step, and after compiling it the unzip is the limit (8.2 of 9.7 s).
 - **Span statistics come from the index** (`LazyTimes.pulses`, `m_even`,
   `m_min`): per stretch, the samples in its 1st, 3rd, 5th ... run and its
   shortest run. `capture.pulse_stats` adds whole stretches up and reads only

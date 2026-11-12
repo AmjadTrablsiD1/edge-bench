@@ -26,7 +26,7 @@ import updater
 from app import cache, compare, dialogs, excel, logic2, measure, readers, waveform
 from app.capture import Capture
 from app.constants import C
-from app.readers import sal
+from app.readers import sal, sal_fast
 
 log = logging.getLogger(__name__)
 UI_DIST = Path(__file__).resolve().parent.parent / "ui" / "dist"
@@ -106,7 +106,7 @@ def whoami():
 def status():
     return {"logic2": S.logic2.status(), "platform": platform.system(),
             "cache_bytes": cache.size_bytes(), "cache_dir": str(cache.root()),
-            "cache_max_gb": C.cache.max_gb}
+            "cache_max_gb": C.cache.max_gb, "fast": sal_fast.status()}
 
 
 # ------------------------------------------------------------------- files
@@ -495,6 +495,34 @@ def set_logic2(req: Logic2PathReq):
     logic2.save_path(req.path)
     S.logic2.close()                       # reconnect with the new binary next time
     return S.logic2.status()
+
+
+class FastReq(BaseModel):
+    enabled: bool
+
+
+@api.post("/api/settings/fast")
+def set_fast(req: FastReq):
+    """Compiled indexing on or off (it is only ever used when it passes its self-test)."""
+    sal_fast.set_wanted(req.enabled)
+    if req.enabled:
+        sal_fast.warm()
+    return sal_fast.status()
+
+
+@api.post("/api/fast/install")
+def install_fast():
+    """Install the optional packages into this install's own Python, then load them."""
+    if updater.venv_python(UPDATE_ROOT) is None:
+        raise HTTPException(409, f"This folder has no Python environment of its own. Install it by hand: "
+                                 f"pip install -c requirements.txt -r {C.update.optional_requirements}")
+    result = updater.ensure_optional(UPDATE_ROOT, force=True)
+    if result == "failed":
+        raise HTTPException(502, "The speed-up could not be installed (no internet, or no package for this "
+                                 "Python). Edge Bench works without it; the offline package brings it along.")
+    sal_fast.reset()
+    sal_fast.kernels()
+    return sal_fast.status()
 
 
 @api.post("/api/cache/clear")

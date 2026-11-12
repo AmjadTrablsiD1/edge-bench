@@ -88,6 +88,17 @@ export interface AppStatus {
   logic2: { mode: string; port: number | null; version: string | null; executable: string | null;
             configured: string | null; user_port_open: boolean };
   platform: string; cache_bytes: number; cache_dir: string; cache_max_gb: number;
+  fast: FastStatus;
+}
+
+/** Compiled indexing of .sal captures (optional; app/readers/sal_fast.py). */
+export interface FastStatus {
+  wanted: boolean;              // the user's switch
+  ready: boolean;               // loading (or compiling) is over
+  active: boolean;              // in use
+  installed: boolean;
+  text: string;
+  load_s: number | null;
 }
 
 export type MatchBy = "number" | "name";

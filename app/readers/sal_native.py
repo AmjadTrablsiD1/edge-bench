@@ -66,6 +66,7 @@ import numpy as np
 
 from app.capture import Capture, Channel, Segment, pulse_stats
 from app.constants import C
+from app.readers import sal_fast
 
 K = C.sal_native
 _MEMBER = re.compile(K.member_regex)
@@ -134,8 +135,39 @@ def _alt(n: int) -> np.ndarray:
     return _ALT[:n]
 
 
+_FAST_ERRORS = {1: "a run-length token is cut off at the end of a chunk",
+                2: "continuation bytes without a token start",
+                3: f"a token longer than {K.max_token_bytes} bytes",
+                4: "a chunk with an empty payload"}
+
+
 def _tokens(p: np.ndarray, pstart: np.ndarray) -> tuple[np.ndarray | None, np.ndarray]:
-    """Payload bytes -> (byte position of every token, its run length).
+    """Payload bytes -> (byte position of every token or None, its run length).
+
+    Done by the compiled loop when sal_fast has one it trusts, else by numpy;
+    both give the same tokens and refuse the same bytes.
+    """
+    kn = sal_fast.kernels()
+    if kn is not None:
+        try:
+            return _tokens_fast(kn, p, pstart)
+        except NativeFormatError:
+            raise
+        except Exception as exc:                          # never expected: numpy takes over for good
+            sal_fast.failed(exc)
+    return _tokens_numpy(p, pstart)
+
+
+def _tokens_fast(kn, p: np.ndarray, pstart: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    code, n, at, runs = kn.tokens(np.ascontiguousarray(p), np.ascontiguousarray(pstart, np.int64),
+                                  int(K.max_token_bytes))
+    if code:
+        raise NativeFormatError(_FAST_ERRORS[int(code)])
+    return at[:n], runs[:n]
+
+
+def _tokens_numpy(p: np.ndarray, pstart: np.ndarray) -> tuple[np.ndarray | None, np.ndarray]:
+    """The numpy way.
 
     `pstart`: where each piece starts in `p` (a token starts there).  The
     positions are None when every token is one byte (token i is byte i) -- the
@@ -363,6 +395,30 @@ def _edges_before(buf: np.ndarray, ix: Index, sample: int, side: str) -> int:
 
 
 def _index_block(p: np.ndarray, pstart: np.ndarray, off: np.ndarray, first: bool, every: int):
+    """One block's part of the index: compiled when sal_fast has a loop it trusts, else numpy."""
+    kn = sal_fast.kernels()
+    if kn is not None:
+        try:
+            return _index_block_fast(kn, p, pstart, off, first, every)
+        except NativeFormatError:
+            raise
+        except Exception as exc:                          # never expected: numpy takes over for good
+            sal_fast.failed(exc)
+    return _index_block_numpy(p, pstart, off, first, every)
+
+
+def _index_block_fast(kn, p: np.ndarray, pstart: np.ndarray, off: np.ndarray, first: bool, every: int):
+    pstart = np.ascontiguousarray(pstart, np.int64)
+    code, n, sums, k, pos, piece, rel, even, low = kn.index_block(
+        np.ascontiguousarray(p), pstart, bool(first), int(every), int(K.max_token_bytes))
+    if code:
+        raise NativeFormatError(_FAST_ERRORS[int(code)])
+    pos, piece = pos[:k], piece[:k]
+    tok = (1 if first else 0) + np.arange(k, dtype=np.int64) * every
+    return n, sums, tok, rel[:k], off[piece] + pos - pstart[piece], piece, even[:k], low[:k]
+
+
+def _index_block_numpy(p: np.ndarray, pstart: np.ndarray, off: np.ndarray, first: bool, every: int):
     """One block, on its own: its pieces' sums, and a mark every `every` edges from its start.
 
     `p`: the payload bytes of the block's pieces, `pstart` where each piece
@@ -370,7 +426,7 @@ def _index_block(p: np.ndarray, pstart: np.ndarray, off: np.ndarray, first: bool
     here depends on the blocks before it, so blocks run in parallel; the
     indexer adds the sample and the edge number each block starts at.
     """
-    s, runs = _tokens(p, pstart)
+    s, runs = _tokens_numpy(p, pstart)
     if off.size == 1:
         sums = np.array([runs.sum(dtype=np.int64)], np.int64)
     else:

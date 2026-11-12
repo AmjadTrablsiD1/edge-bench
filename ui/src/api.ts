@@ -59,5 +59,7 @@ export const api = {
   inspectUpdate: (path: string) => post<UpdatePackage>("update/inspect", { path }),
   installUpdate: (path: string) => post<{ version: string }>("update/install", { path }),
   rollback: () => post<{ version: string }>("update/rollback", {}),
+  setFast: (enabled: boolean) => post<AppStatus["fast"]>("settings/fast", { enabled }),
+  installFast: () => post<AppStatus["fast"]>("fast/install", {}),
   clearCache: () => post<{ cache_bytes: number }>("cache/clear", {}),
 };

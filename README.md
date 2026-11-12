@@ -127,8 +127,8 @@ along with the Logic 2 it started.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 cd ui && npm install && npm run build && cd ..
-.venv/bin/python -m pytest -q          # core, API, compare, .sal reader, updater (216)
-npm install && npx playwright test     # real UI, both themes, axe, fold probe (38)
+.venv/bin/python -m pytest -q          # core, API, compare, .sal reader, updater, fast indexing (319)
+npm install && npx playwright test     # real UI, both themes, axe, fold probe (40)
 .venv/bin/python main.py               # run from the repo
 ```
 
@@ -162,6 +162,20 @@ cores. Measured on an 8-core Mac (a work PC will differ):
 
 Memory stayed near 200 MB for both. Unpacking the zip is now the larger part
 of the first open; nothing in Edge Bench can make that part faster.
+
+**Fast indexing (0.5.0, optional).** With `numba` installed
+(`requirements-fast.txt`; the offline zip brings it along) the two loops of
+the reader are compiled for the PC's processor and run on all its cores.
+A capture of steady clocks, which zips well, shows it best: 3.3 billion edges
+(4.2 GB unpacked) opened in 21 s without it and 9.7 s with it; unzipping alone
+takes 8.2 s. It costs about 100 MB of RAM and one or two seconds at start-up
+(in the background; about 6 s the very first time, when it compiles). It can
+only make things faster, never different: at every start the compiled loops
+must reproduce the built-in code's results on a set of test bytes, and any
+problem (not installed, a failed self-test, an error while running) means the
+built-in code does the work. *App → Fast indexing* shows the state and has
+the switch. A graphics card would not help more: after this step the unzipping
+is the limit, and a zip stream cannot be unpacked on a GPU.
 
 Compare no longer reads every edge of both captures: the index keeps two
 numbers per 4096 edges (time in every second pulse, shortest pulse), and a span

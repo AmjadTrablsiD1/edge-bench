@@ -1,0 +1,6 @@
+# Optional: compiles the indexing of .sal captures for this PC's CPU (first
+# open about 3x faster on large captures).  Edge Bench runs without it, and
+# falls back to its own code if this cannot be installed or loaded.
+# Installed with "-c requirements.txt", so it can never change a package above.
+numba==0.68.1
+llvmlite==0.50.0

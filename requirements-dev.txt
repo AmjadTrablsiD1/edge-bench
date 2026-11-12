@@ -1,4 +1,5 @@
 -r requirements.txt
+-r requirements-fast.txt      # so the tests cover the compiled loops too
 # Test tooling, never shipped.
 pytest==9.1.1
 httpx==0.28.1

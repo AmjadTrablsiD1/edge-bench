@@ -124,8 +124,11 @@ def check() -> int:
         return 1
     from app import logic2
     exe = logic2.find_executable()
+    import importlib.util
+    fast = "installed" if importlib.util.find_spec("numba") else "not installed (optional)"
     print(f"{C.app.name} {C.app.version}: OK  (Python {platform.python_version()}, "
-          f"Logic 2: {exe or 'not found - only CSV / binary exports will open'})")
+          f"Logic 2: {exe or 'not found - only needed for unusual .sal files'}, "
+          f"compiled indexing: {fast})")
     return 0
 
 
@@ -181,6 +184,8 @@ def run() -> int:
     from app import guard
     from server.api import api, busy_text
     guard.start(busy_text)
+    from app.readers import sal_fast
+    sal_fast.warm()                       # compile (first time) or load the fast loops in the background
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

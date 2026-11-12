@@ -405,6 +405,47 @@ def ensure_deps(install: Path) -> bool:
     return True
 
 
+def ensure_optional(install: Path, force: bool = False) -> str:
+    """The optional speed-up packages (requirements-fast.txt): "installed", "failed" or "skipped".
+
+    Edge Bench runs without them, so nothing here may fail an update or a
+    start: a failure is said and remembered, and tried again only when the
+    list changes or the user asks (App tab, or `updater.py --optional`).
+    They are installed with the main list as a constraint, so they can never
+    change a package the app itself needs.
+    """
+    py = venv_python(install)
+    opt, req = install / U["optional_requirements"], install / "requirements.txt"
+    if py is None or not opt.is_file():
+        return "skipped"
+    stamp = install / ".venv" / U["optional_stamp"]
+    want = hashlib.sha256(opt.read_bytes() + req.read_bytes()).hexdigest()
+    try:
+        seen = stamp.read_text(encoding="utf-8").split()
+    except OSError:
+        seen = []
+    if seen[:1] == [want] and not (force and seen[1:] == ["failed"]):
+        return "skipped"
+    tag = subprocess.run([str(py), "-c", "import sys;print(f'cp{sys.version_info[0]}{sys.version_info[1]}')"],
+                         capture_output=True, text=True, encoding="utf-8").stdout.strip()
+    wheels = install / "wheels" / tag
+    cmd = [str(py), "-m", "pip", "install", "--disable-pip-version-check", "-c", str(req), "-r", str(opt)]
+    if wheels.is_dir():
+        cmd[4:4] = ["--no-index", "--find-links", str(wheels)]
+    else:                                              # no internet must not hold a start up for long
+        cmd[4:4] = ["--retries", "0", "--timeout", str(U["optional_pip_timeout_s"])]
+    say("Installing the optional speed-up (compiled indexing) ...")
+    try:
+        ok = _pip(cmd) == 0
+    except OSError:
+        ok = False
+    stamp.write_text(f"{want} {'ok' if ok else 'failed'}", encoding="utf-8")
+    if not ok:
+        say("The optional speed-up could not be installed. Edge Bench works without it;"
+            " the App tab can try again.")
+    return "installed" if ok else "failed"
+
+
 def ensure_ui(install: Path) -> bool:
     """Source folder only: rebuild ui/dist when the UI sources are newer (after a git pull)."""
     ui = install / "ui"
@@ -541,6 +582,7 @@ def _install(src: Path, install: Path, backup: Path, kind: str, *, wait_pid: int
         return _failed(install, kind, old, new, exc, restart, pause, journal)
     journal["state"] = "done"
     _write_journal(install, journal)
+    _optional(install)                               # after the update is safe: cannot undo it
     after_ok()
     _journal_path(install).unlink(missing_ok=True)
     _record(install, ok=True, kind=kind, **{"from": old, "to": new, "error": None})
@@ -606,6 +648,14 @@ def launch(install: Path, *, staged: Path | None, wait_pid: int | None) -> None:
                              stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
 
 
+def _optional(install: Path, force: bool = False) -> str:
+    try:
+        return ensure_optional(install, force)
+    except Exception:                                  # optional means optional
+        say(traceback.format_exc())
+        return "failed"
+
+
 def prepare(install: Path) -> int:
     """The launcher, before every start."""
     try:
@@ -615,6 +665,7 @@ def prepare(install: Path) -> int:
     except UpdateError as exc:
         say(str(exc))
         return 1
+    _optional(install)
     return 0
 
 
@@ -623,6 +674,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("package", nargs="?", help="zip or unzipped folder (default: newest in the update folder)")
     ap.add_argument("--force", action="store_true", help="also install the same or an older version")
     ap.add_argument("--rollback", action="store_true", help="go back to the version before the last update")
+    ap.add_argument("--optional", action="store_true", help="install the optional speed-up packages (again)")
     ap.add_argument("--prepare", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--apply", type=Path, help=argparse.SUPPRESS)
     ap.add_argument("--into", type=Path, help=argparse.SUPPRESS)
@@ -636,6 +688,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.prepare:
         return prepare(install)
+    if a.optional:
+        return 0 if _optional(install, force=True) != "failed" else 1
     if a.apply:
         return apply(a.apply.resolve(), install, wait_pid=a.wait_pid, restart=a.restart, **kw)
     if a.rollback:

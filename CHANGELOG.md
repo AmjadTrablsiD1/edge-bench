@@ -4,6 +4,10 @@ What changed in each version, newest first. The app shows these sections as
 "What's new" before an update. Each heading is `## <version> — <date>`, and the
 bullets underneath are written for the people who use Edge Bench.
 
+## 0.5.0 — 2026-11-12
+- Fast indexing (App tab): the first open of a large .sal is about twice as fast again (3.3 billion edges: 21 s → 10 s). It is optional: the offline package installs it, a switch turns it off, and Edge Bench uses its own code whenever it is missing or does not pass its self-test.
+- The results are identical with it on or off.
+
 ## 0.4.0 — 2026-11-11
 - A .sal capture opens about 10 times faster the first time (1.2 billion edges: 12 s, was about 130 s), with the same low memory. Opening it again is still instant.
 - Compare shows its result at once, also on very large captures. Before, it could take minutes and the screen showed only the two signals.

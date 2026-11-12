@@ -120,6 +120,38 @@ test("heartbeat: a stopped server is shown as stopped, a busy one is not", async
   for (let i = errors.length - 1; i >= 0; i--) if (errors[i].includes("Failed to load resource")) errors.splice(i, 1);
 });
 
+test("fast indexing: status, switch off and on, install when it is missing", async ({ page }, info) => {
+  await page.goto("/");
+  await page.locator("[data-test=tab-app]").click();
+  const status = page.locator("[data-test=fast-status]");
+  await expect(status).toHaveText(/^On — compiled for this PC \(numba [\d.]+\)$/, { timeout: 30_000 });   // loads in the background
+  await page.locator("[data-test=fast-switch] button", { hasText: "Off" }).click();
+  await expect(status).toHaveText("Off");
+  expect((await (await page.request.get("/api/status")).json()).fast.active).toBe(false);
+  await page.locator("[data-test=fast-switch] button", { hasText: "On" }).click();
+  await expect(status).toHaveText(/^On — compiled/);
+  await expect(page.locator("[data-test=fast-install]")).toHaveCount(0);
+  await page.locator("[data-test=fast]").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${SHOTS}/${info.project.name}-17-fast.png` });
+  await axe(page);
+
+  // a PC where the optional package is not there: said plainly, with a way to get it
+  let installed = false;
+  const missing = { wanted: true, ready: true, active: false, installed: false, load_s: 0.1, text: "Not active — not installed (No module named 'numba')" };
+  await page.route("**/api/status", async (r) => {
+    const body = await (await r.fetch()).json();
+    await r.fulfill({ json: installed ? body : { ...body, fast: missing } });
+  });
+  await page.route("**/api/fast/install", async (r) => { installed = true; await r.fulfill({ json: { ...missing, active: true, installed: true, text: "On — compiled for this PC (numba 0.68.1)" } }); });
+  await page.reload();
+  await page.locator("[data-test=tab-app]").click();
+  await expect(status).toContainText("not installed");
+  await page.locator("[data-test=fast-install]").click();
+  await expect(page.locator("[data-test=toast-ok]")).toContainText("Fast indexing is on.");
+  await expect(status).toHaveText(/^On — compiled/);
+  await expect(page.locator("[data-test=fast-install]")).toHaveCount(0);
+});
+
 test("empty state invites the first capture", async ({ page }, info) => {
   await page.goto("/");
   await expect(page.locator("[data-test=empty]")).toContainText("Open a Saleae capture");

@@ -22,7 +22,7 @@ mkdir -p "$STAGE" "$OUT"
 rsync -a --exclude '__pycache__' "$SRC/app" "$SRC/server" "$SRC/shared" "$STAGE/"
 mkdir -p "$STAGE/ui" "$STAGE/branding"
 rsync -a "$SRC/ui/dist" "$STAGE/ui/"
-cp "$SRC/main.py" "$SRC/updater.py" "$SRC/requirements.txt" "$SRC/run-edge-bench.bat" \
+cp "$SRC/main.py" "$SRC/updater.py" "$SRC/requirements.txt" "$SRC/requirements-fast.txt" "$SRC/run-edge-bench.bat" \
    "$SRC/LICENSE" "$SRC/CHANGELOG.md" "$STAGE/"
 cp "$SRC/branding/icon.ico" "$STAGE/branding/"
 cp "$SRC/scripts/windows/"* "$STAGE/"
@@ -54,6 +54,9 @@ for v in 3.12 3.13; do
   # logic2-automation needs pywin32 on Windows; the marker is not evaluated for a foreign platform
   "$PIP" download -q --only-binary=:all: --platform win_amd64 --python-version "$v" \
     --implementation cp pywin32 -d "$STAGE/wheels/$tag"
+  # optional speed-up (compiled indexing): same pins as the app, so no second numpy
+  "$PIP" download -q --only-binary=:all: --platform win_amd64 --python-version "$v" \
+    --implementation cp -c "$SRC/requirements.txt" -r "$SRC/requirements-fast.txt" -d "$STAGE/wheels/$tag"
 done
 manifest                                   # now with wheels/
 ( cd "$(dirname "$STAGE")" && zip -qr "$OUT/EdgeBench-$VER-windows-offline.zip" EdgeBench )

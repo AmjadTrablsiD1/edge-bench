@@ -22,6 +22,9 @@ interface Props {
   onBrowseLogic2: () => void;
   onResetLogic2: () => void;
   onClearCache: () => void;
+  onSetFast: (on: boolean) => void;
+  onInstallFast: () => void;
+  fastBusy: boolean;
   onQuit: () => void;
   update: UpdateInfo | null;
   picked: UpdatePackage | null;      // a zip chosen with "Install from a file…"
@@ -197,6 +200,25 @@ export function Inspector(p: Props) {
               <div className="btn-row">
                 <button className="ghost-btn" onClick={p.onBrowseLogic2}><Icon name="folder" /> Choose Logic 2…</button>
                 {p.status?.logic2.configured && <button className="ghost-btn" onClick={p.onResetLogic2}>Auto-detect</button>}
+              </div>
+            </section>
+            <section className="well" data-test="fast">
+              <h3 className="well-cap">Fast indexing</h3>
+              <dl className="evidence">
+                <dt>Status</dt><dd data-test="fast-status">{p.fastBusy ? "Installing…" : p.status?.fast.text ?? "—"}</dd>
+              </dl>
+              <p className="body-text">Opening a .sal for the first time reads all of it once. With this on, that step is
+                compiled for this PC's processor and runs on all its cores: about twice as fast on large captures. The
+                results are the same — Edge Bench checks that at every start, and uses its own code otherwise.</p>
+              <div className="btn-row">
+                {p.status && (
+                  <Segmented label="Fast indexing" value={p.status.fast.wanted ? "on" : "off"} testId="fast-switch"
+                    onChange={(v) => p.onSetFast(v === "on")}
+                    options={[{ value: "on", label: "On" }, { value: "off", label: "Off" }]} />
+                )}
+                {p.status?.fast.wanted && p.status.fast.ready && !p.status.fast.installed && (
+                  <button className="ghost-btn" onClick={p.onInstallFast} disabled={p.fastBusy} data-test="fast-install">Install…</button>
+                )}
               </div>
             </section>
             <section className="well">

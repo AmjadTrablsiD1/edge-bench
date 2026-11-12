@@ -33,6 +33,9 @@ echo "==> Python environment"
 PY="$DEST/.venv/bin/python3"
 [ -x "$PY" ] || "$BASE_PYTHON" -m venv "$DEST/.venv"
 "$DEST/.venv/bin/pip" install -q -r "$DEST/requirements.txt"
+# optional: compiled indexing of .sal captures; the app runs without it
+"$DEST/.venv/bin/pip" install -q -c "$DEST/requirements.txt" -r "$DEST/requirements-fast.txt" \
+  || echo "(optional speed-up not installed -- Edge Bench works without it)"
 
 echo "==> Shortcut: $SHORTCUTS/$APP_NAME.command"
 # .command runs in Terminal, which already holds the Desktop/Documents

@@ -23,7 +23,7 @@ import pytest
 from app import cache, compare, measure, waveform
 from app.capture import Capture, Channel, pulse_stats
 from app.constants import C
-from app.readers import binary, sal, sal_native as N
+from app.readers import binary, sal, sal_fast, sal_native as N
 from tests import salgen
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -38,6 +38,18 @@ IDS = [p.stem for p, _ in PAIRS]
 def tmp_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(cache, "root", lambda: tmp_path / "cache")
     (tmp_path / "cache").mkdir()
+
+
+@pytest.fixture(autouse=True, params=["numpy", "compiled"])
+def engine(request, monkeypatch):
+    """Every test here runs twice: with the numpy code and with the compiled loops (sal_fast)."""
+    if request.param == "numpy":
+        monkeypatch.setattr(sal_fast, "kernels", lambda: None)
+    else:
+        monkeypatch.setattr(sal_fast, "wanted", lambda: True)
+        if sal_fast.kernels() is None:
+            pytest.skip(f"compiled indexing is not available here: {sal_fast.status()['text']}")
+    return request.param
 
 
 def native(sal_path: Path, tmp: Path) -> dict:
@@ -229,6 +241,9 @@ def test_tokens_read_what_the_encoder_wrote(regime, fill, monkeypatch):
     pstart = np.cumsum([0, *[q.size for q in parts[:-1]]])
     at, got = N._tokens(np.concatenate(parts), pstart)
     assert np.array_equal(got.astype(np.int64), runs)
+    np_at, np_got = N._tokens_numpy(np.concatenate(parts), pstart)        # always: this is where `fill` matters
+    assert np.array_equal(np_got.astype(np.int64), runs)
+    assert np.array_equal(np.arange(runs.size) if np_at is None else np_at, np.arange(runs.size) if at is None else at)
     want_at = np.cumsum([0, *[len(salgen.encode_runs(runs[i:i + 1])) for i in range(runs.size - 1)]])
     assert np.array_equal(np.arange(runs.size) if at is None else at, want_at)
 
@@ -476,7 +491,8 @@ import numpy as np
 import salgen
 from app import measure, waveform
 from app.capture import Capture, Channel
-from app.readers import sal_native as N
+from app.readers import sal_fast, sal_native as N
+sal_fast.kernels()            # the compiler's own memory (about 100 MB, once) is not what this measures
 n, tmp = int(sys.argv[2]), Path(tempfile.mkdtemp())
 if n:
     rng = np.random.default_rng(1)

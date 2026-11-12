@@ -116,6 +116,25 @@ export default function App() {
     return () => { live = false; window.clearTimeout(timer); };
   }, [quit, updating]);
   useEffect(() => { if (!loading) refreshStatus(); }, [loading, refreshStatus]);
+  // compiled indexing loads in the background after a start: ask again until it says what it is
+  const fastStarting = !!status && status.fast.wanted && !status.fast.ready;
+  useEffect(() => {
+    if (!fastStarting || stopped) return;
+    const t = window.setTimeout(refreshStatus, C.ui.fast_poll_ms);
+    return () => window.clearTimeout(t);
+  }, [fastStarting, stopped, status, refreshStatus]);
+  const [fastBusy, setFastBusy] = useState(false);
+  const setFast = async (on: boolean) => {
+    try { const fast = await api.setFast(on); setStatus((s) => (s ? { ...s, fast } : s)); } catch (e) { fail(e); }
+  };
+  const installFast = async () => {
+    setFastBusy(true);
+    try {
+      const fast = await api.installFast();
+      setStatus((s) => (s ? { ...s, fast } : s));
+      toast(fast.active ? "ok" : "error", fast.active ? "Fast indexing is on." : `Fast indexing: ${fast.text}`);
+    } catch (e) { fail(e); } finally { setFastBusy(false); }
+  };
 
   // ---- updates: what the update folder offers; a failed update says so once
   useEffect(() => {
@@ -517,6 +536,7 @@ export default function App() {
           } catch (e) { fail(e); }
         }}
         onResetLogic2={async () => { await api.setLogic2(null).catch(fail); refreshStatus(); }}
+        onSetFast={setFast} onInstallFast={installFast} fastBusy={fastBusy}
         onQuit={async () => {
           try { await api.quit(); setQuit(true); } catch (e) { fail(e); }
         }}

@@ -386,3 +386,58 @@ def test_the_running_app_updates_itself(pkgs, tmp_path, home):
                 os.kill(who["pid"], 15)
             except OSError:
                 pass
+
+
+def test_the_optional_speed_up_can_never_fail_an_update_or_a_start(tmp_path, monkeypatch):
+    """requirements-fast.txt: installed with the main list as a constraint, tried once, never fatal."""
+    if sys.platform == "win32":
+        pytest.skip("the fake venv below is POSIX-shaped")
+    install = tmp_path / "inst"
+    (install / ".venv" / "bin").mkdir(parents=True)
+    (install / ".venv" / "bin" / "python3").symlink_to(sys.executable)
+    (install / "requirements.txt").write_text("numpy==2.5.4\n", encoding="utf-8")
+    opt = install / updater.U["optional_requirements"]
+    calls = []
+    monkeypatch.setattr(updater, "_pip", lambda cmd: calls.append(cmd) or 0)
+    assert updater.ensure_optional(install) == "skipped" and not calls          # an older package: no such file
+    opt.write_text("numba==0.68.1\n", encoding="utf-8")
+    assert updater.ensure_optional(install) == "installed"
+    cmd = calls[-1]
+    assert cmd[cmd.index("-c") + 1] == str(install / "requirements.txt") and cmd[cmd.index("-r") + 1] == str(opt)
+    assert "--retries" in cmd and "--no-index" not in cmd                       # online: give up quickly
+    assert updater.ensure_optional(install) == "skipped" and len(calls) == 1    # done: not again
+    assert updater.ensure_optional(install, force=True) == "skipped" and len(calls) == 1
+
+    # a new list, and pip fails (no internet, no wheel for this Python): said, remembered, not fatal
+    opt.write_text("numba==0.69.0\n", encoding="utf-8")
+    tag = f"cp{sys.version_info[0]}{sys.version_info[1]}"
+    (install / "wheels" / tag).mkdir(parents=True)
+    monkeypatch.setattr(updater, "_pip", lambda cmd: calls.append(cmd) or int("-c" in cmd))    # only the optional list fails
+    assert updater.ensure_optional(install) == "failed"
+    assert calls[-1][4:7] == ["--no-index", "--find-links", str(install / "wheels" / tag)] and "--retries" not in calls[-1]
+    n = len(calls)
+    assert updater.ensure_optional(install) == "skipped" and len(calls) == n    # not at every start
+    assert updater.prepare(install) == 0 and len(calls) == n + 1                # prepare: main packages only
+    assert updater.ensure_optional(install, force=True) == "failed" and len(calls) == n + 2      # the App tab's button
+    monkeypatch.setattr(updater, "_pip", lambda cmd: calls.append(cmd) or 0)
+    assert updater.ensure_optional(install, force=True) == "installed"
+
+    # even pip itself blowing up is swallowed where an update or a start calls it
+    opt.write_text("numba==0.70.0\n", encoding="utf-8")
+
+    def explode(cmd):
+        if "-c" in cmd:
+            raise RuntimeError("pip is broken")
+        return 0
+
+    monkeypatch.setattr(updater, "_pip", explode)
+    assert updater.prepare(install) == 0
+    assert updater.main(["--optional", "--into", str(install)]) == 1
+
+
+def test_an_update_still_succeeds_when_the_speed_up_cannot_be_installed(tmp_path, monkeypatch):
+    install = install_from(build_package(tmp_path, "1.0.0"), tmp_path / "inst")
+    new = build_package(tmp_path, "1.1.0")
+    monkeypatch.setattr(updater, "ensure_optional", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    assert updater.apply(updater.stage(new, install), install, wait_pid=None, restart=False, pause=False) == 0
+    assert updater.installed_version(install) == "1.1.0" and updater.last_result(install)["ok"]
