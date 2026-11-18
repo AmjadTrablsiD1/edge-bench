@@ -256,6 +256,32 @@ Rules for future versions:
 - **Every release** needs a `CHANGELOG.md` section. `scripts/release.sh`
   enforces it, and the app shows it to users before they install.
 
+
+### From GitHub (0.7.0)
+
+- **No API.** `github.com/<repo>/releases/latest` answers with a redirect to
+  `.../releases/tag/vX.Y.Z`; *What's new* is `raw.githubusercontent.com/<repo>/vX.Y.Z/CHANGELOG.md`;
+  files are `.../releases/download/vX.Y.Z/<name>`. The REST API allows 60
+  unauthenticated requests an hour per address, and an office shares one.
+  Checks are cached for `update.github.check_every_s` (`~/.cache/edge-bench/github-latest.json`).
+- **Nothing unverified is installed.** A release must carry `SHA256SUMS.txt`;
+  a zip whose hash differs (or a release without the file) is refused, and
+  the `.part` file is removed. Then `read_package` checks it is Edge Bench
+  and the version, exactly as for a zip from a folder.
+- **Small zip first.** The offline zip (wheels, 161 MB) is fetched only on
+  Windows and only when the version's `requirements.txt` differs from the one
+  the venv was built for. The wheels are never used off Windows (win_amd64).
+- **The app** checks in a background thread (`server/api.py` `UPD`), the
+  download runs as one job with progress and cancel, then stages and hands
+  over like *Install from a file*. GitHub and the update folder are both
+  sources; the newer wins, a tie goes to the folder (no download).
+- **Tests never reach github.com**: `tests/test_updater.py` serves the same
+  URLs from 127.0.0.1 (`FakeGitHub`), and Playwright's server gets
+  `EDGE_BENCH_GITHUB_SITE` pointing at a closed port.
+- **Publishing**: `scripts/publish_github.sh` (via `release.sh --github`).
+  The first release with this code (0.7.0) has to reach each PC once by
+  hand or by the update folder; older versions do not know GitHub.
+
 ## Known sharp edges
 
 - **Always pass `encoding="utf-8"`** to every text read/write/subprocess. Windows reads text as cp1252 by default and constants.json holds µ, Δ, ⏱ — 0.1.0 died on its first line on Windows 11, invisibly under pythonw. `tests/test_windows_readiness.py` fails the build if any app code relies on the default.

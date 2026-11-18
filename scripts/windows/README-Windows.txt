@@ -43,6 +43,10 @@ If it does not start
 
 Updating
   From 0.3.0 on, new versions install over this one:
+  - From 0.7.0: straight from GitHub. The app checks when it starts and
+    shows "Update X.Y" at the top; App tab -> Updates -> "Download X.Y and
+    restart". Or double-click "Update Edge Bench.bat". Downloads are checked
+    against the release's checksums before anything is installed.
   - App tab -> Updates -> "Choose update folder..." (e.g. a network share).
     New zips put there are offered in the app ("Update X.Y" at the top).
   - Or drag a new EdgeBench-...-windows.zip onto "Update Edge Bench.bat".
@@ -58,6 +62,8 @@ Big captures
   exported through Logic 2; the Coverage tab then says so.
 
 Status
+  0.7.0: updates straight from GitHub (App tab -> Updates, or double-click
+         "Update Edge Bench.bat").
   0.6.0: a cursor as the reference: double-click the waveform, every channel
          is measured from that time.
   0.5.0: optional fast indexing (App tab): large .sal files open about twice

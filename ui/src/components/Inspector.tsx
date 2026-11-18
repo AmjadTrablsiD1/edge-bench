@@ -35,6 +35,9 @@ interface Props {
   onPickUpdate: () => void;
   onInstallUpdate: (pkg: UpdatePackage) => void;
   onRollback: () => void;
+  onCheckUpdates: () => void;
+  onSetGithub: (on: boolean) => void;
+  onCancelDownload: () => void;
 }
 
 const EDGE_OPTS = (any: boolean) => [
@@ -259,6 +262,19 @@ export function Inspector(p: Props) {
   );
 }
 
+const mb = (b: number) => `${(b / 1e6).toFixed(b < 1e7 ? 1 : 0)} MB`;
+
+function githubText(u: UpdateInfo | null): string {
+  if (!u) return "—";
+  const g = u.github;
+  if (!g.enabled) return "off";
+  if (g.state === "checking") return `${g.repo} · checking…`;
+  if (g.state === "error") return `${g.repo} · not reachable`;
+  if (!g.checked) return g.repo;
+  const min = Math.max(0, Math.round((Date.now() / 1000 - g.checked) / 60));
+  return `${g.repo} · checked ${min < 1 ? "just now" : min < 90 ? `${min} min ago` : `${Math.round(min / 60)} h ago`}`;
+}
+
 function Updates(p: Props) {
   const u = p.update;
   const pkg = p.picked ?? u?.available ?? null;
@@ -268,6 +284,7 @@ function Updates(p: Props) {
       <h3 className="well-cap">Updates</h3>
       <dl className="evidence">
         <dt>Installed</dt><dd data-test="update-current">{C.app.version}</dd>
+        <dt>GitHub</dt><dd data-test="update-github">{githubText(u)}</dd>
         <dt>Update folder</dt><dd className="path" data-test="update-folder">{u?.folder ?? "not set"}</dd>
         {u?.previous && <><dt>Kept for rollback</dt><dd>{u.previous}</dd></>}
       </dl>
@@ -277,6 +294,13 @@ function Updates(p: Props) {
       ) : (
         <>
           {u?.error && <p className="body-text warn-text">{u.error}</p>}
+          {u?.github.enabled && u.github.state === "error" && (
+            <p className="body-text warn-text" data-test="update-github-error">{u.github.error}</p>
+          )}
+          {u?.download.state === "error" && (
+            <p className="body-text warn-text" data-test="update-download-error">
+              Downloading {u.download.version} failed: {(u.download.error ?? "").replace(/\.?\s*$/, ".")} Nothing was changed.</p>
+          )}
           {last && !last.ok && (
             <p className="body-text warn-text" data-test="update-failed">
               The {last.kind === "rollback" ? "rollback" : "update"}{last.to ? ` to ${last.to}` : ""} failed:{" "}
@@ -285,7 +309,7 @@ function Updates(p: Props) {
           {pkg ? (
             <div className="update-card" data-test="update-available">
               <p className="body-text"><b>{C.app.name} {pkg.version}</b>{" "}
-                {pkg.newer ? "is ready to install." : `is not newer than ${C.app.version}.`}
+                {!pkg.newer ? `is not newer than ${C.app.version}.` : pkg.remote ? "is available on GitHub." : "is ready to install."}
                 {pkg.offline ? " Offline package: no internet needed." : ""}</p>
               {pkg.notes.map((n) => (
                 <div key={n.version}>
@@ -293,17 +317,39 @@ function Updates(p: Props) {
                   <ul className="cover-list">{n.items.map((it, i) => <li key={i}>{it}</li>)}</ul>
                 </div>
               ))}
-              {pkg.newer && (
+              {pkg.newer && u?.download.state === "downloading" && u.download.version === pkg.version ? (
+                <div data-test="update-progress">
+                  <p className="body-text">Downloading {pkg.version} — {mb(u.download.done)}{u.download.total ? ` of ${mb(u.download.total)}` : ""}</p>
+                  <div className="progress" role="progressbar" aria-label="Download"
+                    aria-valuemin={0} aria-valuemax={100} aria-valuenow={u.download.total ? Math.round(100 * u.download.done / u.download.total) : undefined}>
+                    <span style={{ width: u.download.total ? `${(100 * u.download.done) / u.download.total}%` : "30%" }}
+                      className={u.download.total ? "" : "indeterminate"} />
+                  </div>
+                  <div className="btn-row"><button className="ghost-btn" onClick={p.onCancelDownload} data-test="update-cancel">Cancel</button></div>
+                </div>
+              ) : pkg.newer && (
                 <div className="btn-row">
                   <button className="primary-btn" onClick={() => p.onInstallUpdate(pkg)} data-test="update-install">
-                    Install {pkg.version} and restart
+                    {pkg.remote ? `Download ${pkg.version} and restart` : `Install ${pkg.version} and restart`}
                   </button>
+                  {pkg.remote && pkg.url && <a className="link-btn" href={pkg.url} target="_blank" rel="noreferrer">Release page</a>}
                 </div>
               )}
             </div>
-          ) : u?.folder && !u.error ? (
-            <p className="body-text">{C.app.name} is up to date.</p>
+          ) : (u?.folder && !u.error) || u?.github.state === "done" ? (
+            <p className="body-text" data-test="update-none">{C.app.name} is up to date.</p>
           ) : null}
+          <div className="btn-row">
+            {u?.github.enabled && (
+              <button className="ghost-btn" onClick={p.onCheckUpdates} disabled={u.github.state === "checking"}
+                data-test="update-check">{u.github.state === "checking" ? "Checking…" : "Check now"}</button>
+            )}
+            {u && (
+              <Segmented label="Check GitHub for updates" value={u.github.enabled ? "on" : "off"} testId="update-github-switch"
+                onChange={(v) => p.onSetGithub(v === "on")}
+                options={[{ value: "on", label: "GitHub on" }, { value: "off", label: "Off" }]} />
+            )}
+          </div>
           <div className="btn-row">
             <button className="ghost-btn" onClick={p.onChooseUpdateFolder} data-test="update-folder-choose">
               <Icon name="folder" /> {u?.folder ? "Change folder…" : "Choose update folder…"}</button>

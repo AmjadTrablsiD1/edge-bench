@@ -1,7 +1,8 @@
 @echo off
 REM Install a new Edge Bench version over this one, keeping this one for a rollback.
-REM   Drag an EdgeBench-...-windows.zip onto this file, or double-click it to
-REM   take the newest zip from the update folder set in the app (App tab).
+REM   Double-click it: the newest version from GitHub (or from the update
+REM   folder set in the app, when that one is newer).  Or drag an
+REM   EdgeBench-...-windows.zip onto this file.
 REM   "Update Edge Bench.bat" --rollback   goes back to the version before.
 setlocal
 cd /d "%~dp0"

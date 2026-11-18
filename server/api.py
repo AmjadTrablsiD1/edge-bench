@@ -407,6 +407,38 @@ def quit_app():
 
 # ----------------------------------------------------------------- updates
 
+class _Updates:
+    """GitHub: the last check (run in the background) and the one download job."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.check = {"state": "idle", "error": None, "remote": None}       # idle | checking | done | error
+        self.job = {"state": "idle", "version": None, "done": 0, "total": None, "error": None}
+        self.cancel = threading.Event()
+
+
+UPD = _Updates()
+
+
+def _check_github(force: bool) -> None:
+    try:
+        remote = updater.find_github(C.app.version, force=force)
+        with UPD.lock:
+            UPD.check = {"state": "done", "error": None, "remote": remote.public() if remote else None}
+    except Exception as exc:                          # offline, proxy, GitHub down: said, never fatal
+        log.info("GitHub check failed: %s", exc)
+        with UPD.lock:
+            UPD.check = {"state": "error", "error": str(exc), "remote": None}
+
+
+def _start_check(force: bool = False) -> None:
+    with UPD.lock:
+        if UPD.check["state"] == "checking":
+            return
+        UPD.check = {**UPD.check, "state": "checking"}
+    threading.Thread(target=_check_github, args=(force,), name="github-check", daemon=True).start()
+
+
 def _update_state() -> dict:
     root = UPDATE_ROOT
     d = {"current": C.app.version, "folder": updater.update_folder(), "available": None, "error": None,
@@ -418,11 +450,95 @@ def _update_state() -> dict:
             d["available"] = pkg.public() if pkg else None
         except updater.UpdateError as exc:
             d["error"] = str(exc)
+    on = updater.github_enabled()
+    with UPD.lock:
+        check, job = dict(UPD.check), dict(UPD.job)
+    remote = check["remote"] if on else None
+    if remote and (d["available"] is None or updater.vtuple(remote["version"]) > updater.vtuple(d["available"]["version"])):
+        d["available"] = remote                       # the newest of the two wins; a tie: the folder (no download)
+    d["github"] = {"enabled": on, "repo": updater.G["repo"],
+                   "url": f"{updater.G['site']}/{updater.G['repo']}/releases",
+                   "state": check["state"] if on else "off", "error": check["error"] if on else None,
+                   "checked": updater.github_checked()}
+    d["download"] = job
     return d
 
 
 @api.get("/api/update")
 def update_info():
+    if updater.github_enabled() and UPD.check["state"] == "idle":
+        _start_check()                                # first look in this session (GitHub is asked at most hourly)
+    return _update_state()
+
+
+@api.post("/api/update/check")
+def check_updates():
+    """Ask GitHub now, whatever the last check was."""
+    if updater.github_enabled():
+        _start_check(force=True)
+    return _update_state()
+
+
+class GithubReq(BaseModel):
+    enabled: bool
+
+
+@api.post("/api/update/github")
+def set_github(req: GithubReq):
+    updater.set_github_enabled(req.enabled)
+    if req.enabled:
+        _start_check(force=True)
+    return _update_state()
+
+
+class DownloadReq(BaseModel):
+    version: str
+
+
+def _download_and_install(version: str, server) -> None:
+    def progress(done: int, total: int | None) -> None:
+        with UPD.lock:
+            UPD.job.update(done=done, total=total)
+
+    try:
+        z = updater.fetch_github(UPDATE_ROOT, version, progress, UPD.cancel.is_set)
+        staged = updater.stage(z, UPDATE_ROOT)
+        with UPD.lock:
+            UPD.job.update(state="installing")
+        updater.launch(UPDATE_ROOT, staged=staged, wait_pid=os.getpid())
+        _quit_soon(server)
+    except updater.Cancelled:
+        with UPD.lock:
+            UPD.job = {"state": "idle", "version": None, "done": 0, "total": None, "error": None}
+    except Exception as exc:
+        log.exception("update from GitHub failed")
+        with UPD.lock:
+            UPD.job.update(state="error", error=str(exc))
+
+
+@api.post("/api/update/download")
+def download_update(req: DownloadReq):
+    """Download a GitHub release (checked against its SHA256SUMS), then install it like a file."""
+    server = _own_server()
+    if updater.is_source_checkout(UPDATE_ROOT):
+        raise HTTPException(422, "This is a source folder (git): update it with  git pull  instead.")
+    try:
+        updater.vtuple(req.version)
+    except updater.UpdateError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    with UPD.lock:
+        if UPD.job["state"] in ("downloading", "installing"):
+            raise HTTPException(409, f"Version {UPD.job['version']} is already being downloaded.")
+        UPD.cancel.clear()
+        UPD.job = {"state": "downloading", "version": req.version, "done": 0, "total": None, "error": None}
+    threading.Thread(target=_download_and_install, args=(req.version, server), name="github-download",
+                     daemon=True).start()
+    return _update_state()
+
+
+@api.post("/api/update/cancel")
+def cancel_download():
+    UPD.cancel.set()
     return _update_state()
 
 

@@ -161,9 +161,26 @@ export default function App() {
     } catch (e) { fail(e); }
   };
   const installUpdate = async (pkg: UpdatePackage) => {
+    if (pkg.remote) {                        // download first (with progress), the server installs when done
+      try { setUpdate(await api.downloadUpdate(pkg.version)); } catch (e) { fail(e); }
+      return;
+    }
     setUpdating(`Updating to ${pkg.version}`);
     try { await api.installUpdate(pkg.source); } catch (e) { setUpdating(null); fail(e); }
   };
+  const checkUpdates = async () => { try { setUpdate(await api.checkUpdates()); } catch (e) { fail(e); } };
+  const setGithub = async (on: boolean) => { try { setUpdate(await api.setGithub(on)); } catch (e) { fail(e); } };
+  const cancelDownload = async () => { try { setUpdate(await api.cancelDownload()); } catch (e) { fail(e); } };
+  // follow a GitHub check or a download until it settles; a finished download installs itself
+  const updateBusy = !!update && (update.github.state === "checking" || update.download.state === "downloading");
+  useEffect(() => {
+    if (!updateBusy || stopped) return;
+    const t = window.setTimeout(() => { api.update().then(setUpdate).catch(() => {}); }, C.ui.update_poll_ms);
+    return () => window.clearTimeout(t);
+  }, [update, updateBusy, stopped]);
+  useEffect(() => {
+    if (update?.download.state === "installing") setUpdating(`Updating to ${update.download.version}`);
+  }, [update?.download.state, update?.download.version]);
   const rollback = async () => {
     if (!update?.previous) return;
     setUpdating(`Rolling back to ${update.previous}`);
@@ -425,7 +442,7 @@ export default function App() {
         <div className="header-spacer" />
         {update?.available && !update.source_checkout && (
           <button className="ghost-btn" onClick={() => setFocusApp((n) => n + 1)} data-test="update-chip"
-            title={`${C.app.name} ${update.available.version} is in the update folder`}>
+            title={`${C.app.name} ${update.available.version} is ${update.available.remote ? "on GitHub" : "in the update folder"}`}>
             <Icon name="download" /> Update {update.available.version}</button>
         )}
         <button className="icon-btn big" onClick={() => setTheme(otherTheme)} data-test="theme-toggle"
@@ -582,6 +599,7 @@ export default function App() {
         update={update} picked={picked} focusApp={focusApp}
         onChooseUpdateFolder={chooseUpdateFolder} onClearUpdateFolder={clearUpdateFolder}
         onPickUpdate={pickUpdate} onInstallUpdate={installUpdate} onRollback={rollback}
+        onCheckUpdates={checkUpdates} onSetGithub={setGithub} onCancelDownload={cancelDownload}
         onClearCache={async () => {
           try { const r = await api.clearCache(); toast("ok", `Cache cleared (${bytes(r.cache_bytes)} left).`); refreshFiles(); refreshStatus(); }
           catch (e) { fail(e); }

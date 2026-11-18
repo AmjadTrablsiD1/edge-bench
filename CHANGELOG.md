@@ -4,6 +4,12 @@ What changed in each version, newest first. The app shows these sections as
 "What's new" before an update. Each heading is `## <version> — <date>`, and the
 bullets underneath are written for the people who use Edge Bench.
 
+## 0.7.0 — 2026-11-18
+- Updates straight from GitHub: Edge Bench checks for a new release when it starts and offers it at the top ("Update X.Y"). One click downloads, checks and installs it; the old version is still put back if anything fails.
+- Every download is checked against the release's checksums before anything is installed. When a version needs other Python packages, the offline package is fetched, so pypi.org is never needed.
+- "Update Edge Bench.bat" (double-click) does the same without opening the app. An update folder still works, and the newer of the two wins.
+- App -> Updates: "Check now", and a switch to turn GitHub off.
+
 ## 0.6.0 — 2026-11-18
 - A cursor as the reference: double-click the waveform (or type a time) and every channel is measured from there, like a Logic 2 timing marker. Drag the cursor's line to move it; each capture keeps its own.
 - Compare can align A and B on a cursor in each; Excel says which cursor every capture was measured from.

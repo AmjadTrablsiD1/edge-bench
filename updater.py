@@ -5,7 +5,9 @@ Standard library only: it runs before the packages are installed, and the
 version being installed runs its *own* copy of this file, so each release
 decides how it is installed.
 
-  python updater.py                      install the newest zip in the update folder
+  python updater.py                      install the newest version: the update folder's,
+                                         or GitHub's when there is no folder (or it is older)
+  python updater.py --github             install the newest GitHub release
   python updater.py PACKAGE [--force]    install that zip or unzipped folder
   python updater.py --rollback           go back to the version before the last update
   python updater.py --prepare            launcher: finish/undo an interrupted update,
@@ -218,6 +220,224 @@ def find_update(folder: str | Path, current: str) -> Package | None:
     return read_package(best[1], current) if best else None
 
 
+# ------------------------------------------------------------------ GitHub
+#
+# Only the plain web pages, never api.github.com: the API allows 60 requests an
+# hour per network address, and a whole office shares one.
+#   newest version   github.com/<repo>/releases/latest  -> 302 to .../releases/tag/vX.Y.Z
+#   what's new       raw.githubusercontent.com/<repo>/vX.Y.Z/CHANGELOG.md
+#   files            github.com/<repo>/releases/download/vX.Y.Z/<name>
+# Every zip must match SHA256SUMS.txt of its release, or it is not installed.
+# Requests go through the PC's proxy (urllib reads it from the environment,
+# and on Windows from the system settings) and trust the system's certificates.
+
+G = dict(U["github"])
+# a mirror of the releases (or a test server) instead of github.com: same URL layout
+for _key, _env in (("site", "EDGE_BENCH_GITHUB_SITE"), ("raw", "EDGE_BENCH_GITHUB_RAW")):
+    if os.environ.get(_env):
+        G[_key] = os.environ[_env].rstrip("/")
+
+
+def github_enabled() -> bool:
+    try:
+        return json.loads(settings_file().read_text(encoding="utf-8")).get(G["settings_key"], True) is not False
+    except (OSError, ValueError):
+        return True
+
+
+def set_github_enabled(on: bool) -> None:
+    f = settings_file()
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data[G["settings_key"]] = bool(on)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None                                   # the redirect itself is the answer
+
+
+def _request(url: str) -> urllib.request.Request:
+    return urllib.request.Request(url, headers={"User-Agent": f"EdgeBench-updater/{C['app']['version']}"})
+
+
+def _reach(exc: Exception) -> UpdateError:
+    why = getattr(exc, "reason", None) or exc
+    return UpdateError(f"Cannot reach GitHub ({why}). Check the internet connection or the proxy; "
+                       f"an update folder or a downloaded zip works without it.")
+
+
+def github_latest() -> str | None:
+    """The newest released version on GitHub, or None when there is no release yet."""
+    url = f"{G['site']}/{G['repo']}/releases/latest"
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(_request(url), timeout=G["timeout_s"]) as r:
+            where = r.geturl()                        # a proxy may have followed the redirect already
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (301, 302, 303, 307, 308):
+            raise UpdateError(f"GitHub answered {exc.code} for {url}.") from exc
+        where = exc.headers.get("Location", "")
+    except (urllib.error.URLError, OSError) as exc:
+        raise _reach(exc) from exc
+    m = re.search(r"/releases/tag/v?(\d+(?:\.\d+)*)/?$", where)
+    return m.group(1) if m else None                  # .../releases: nothing published yet
+
+
+def _get(url: str) -> bytes:
+    try:
+        with urllib.request.urlopen(_request(url), timeout=G["timeout_s"]) as r:
+            return r.read()
+    except urllib.error.HTTPError as exc:
+        raise UpdateError(f"GitHub answered {exc.code} for {url}.") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise _reach(exc) from exc
+
+
+def _asset(tag: str, name: str) -> str:
+    return f"{G['site']}/{G['repo']}/releases/download/{tag}/{name}"
+
+
+@dataclass
+class Remote:
+    """A release on GitHub: known, not downloaded yet."""
+    version: str
+    notes: list[dict]
+    newer: bool = True
+
+    def public(self) -> dict:
+        tag = f"v{self.version}"
+        return {"source": f"github:{tag}", "name": f"GitHub release {tag}", "version": self.version,
+                "offline": False, "notes": self.notes, "newer": self.newer, "remote": True,
+                "url": f"{G['site']}/{G['repo']}/releases/tag/{tag}"}
+
+
+def _github_cache() -> Path:
+    return _home("cache_dir") / G["cache_name"]
+
+
+def find_github(current: str, force: bool = False) -> Remote | None:
+    """The newest GitHub release if it is newer than `current`.
+
+    GitHub is asked at most every check_every_s (the answer is kept in the
+    cache folder), unless `force`.  Raises UpdateError when it cannot be reached.
+    """
+    cache = _github_cache()
+    try:
+        seen = json.loads(cache.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        seen = {}
+    if force or time.time() - seen.get("checked", 0) > G["check_every_s"] or seen.get("repo") != G["repo"]:
+        version = github_latest()
+        log = ""
+        if version and vtuple(version) > vtuple(current):
+            try:
+                log = _get(f"{G['raw']}/{G['repo']}/v{version}/{U['changelog']}").decode("utf-8")
+            except UpdateError:
+                pass                                  # the notes are a nicety; the update is not
+        seen = {"checked": time.time(), "repo": G["repo"], "version": version, "changelog": log}
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(seen), encoding="utf-8")
+        except OSError:
+            pass
+    version = seen.get("version")
+    if not version or vtuple(version) <= vtuple(current):
+        return None
+    return Remote(version, release_notes(seen.get("changelog") or "", current, version))
+
+
+def github_checked() -> float | None:
+    """When GitHub was last asked (time.time()), or None."""
+    try:
+        return json.loads(_github_cache().read_text(encoding="utf-8")).get("checked")
+    except (OSError, ValueError):
+        return None
+
+
+def _sums(tag: str) -> dict[str, str]:
+    out = {}
+    for line in _get(_asset(tag, G["sums"])).decode("utf-8").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and re.fullmatch(r"[0-9a-f]{64}", parts[0]):
+            out[parts[1].lstrip("*")] = parts[0]
+    if not out:
+        raise UpdateError(f"The release {tag} has no checksums ({G['sums']}); it is not installed.")
+    return out
+
+
+class Cancelled(UpdateError):
+    """The user stopped the download."""
+
+
+def download(url: str, dest: Path, sha256: str, progress=None, cancelled=lambda: False) -> Path:
+    """`url` to `dest`, kept only if its SHA-256 is `sha256`.  progress(done, total)."""
+    part = dest.with_name(dest.name + ".part")
+    h, done = hashlib.sha256(), 0
+    try:
+        with urllib.request.urlopen(_request(url), timeout=G["timeout_s"]) as r, open(part, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0) or None
+            while chunk := r.read(G["chunk_bytes"]):
+                if cancelled():
+                    raise Cancelled("The download was stopped.")
+                f.write(chunk)
+                h.update(chunk)
+                done += len(chunk)
+                if progress:
+                    progress(done, total)
+    except urllib.error.HTTPError as exc:
+        part.unlink(missing_ok=True)
+        raise UpdateError(f"GitHub answered {exc.code} for {url}.") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        part.unlink(missing_ok=True)
+        raise _reach(exc) from exc
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+    if h.hexdigest() != sha256:
+        part.unlink(missing_ok=True)
+        raise UpdateError(f"{dest.name} did not arrive intact (its checksum does not match); nothing was installed.")
+    part.replace(dest)
+    return dest
+
+
+def _needs_packages(z: Path, install: Path) -> bool:
+    """Would this package's Python packages have to be installed (requirements changed)?"""
+    with zipfile.ZipFile(z) as zf:
+        req = zf.read(_zip_root(zf.namelist()) + "requirements.txt")
+    try:
+        stamp = (install / ".venv" / U["deps_stamp"]).read_text(encoding="utf-8").strip()
+    except OSError:
+        return True
+    return hashlib.sha256(req).hexdigest() != stamp
+
+
+def fetch_github(install: Path, version: str, progress=None, cancelled=lambda: False) -> Path:
+    """Download release `version` into .update/downloads; returns the zip to install.
+
+    The small zip first.  On Windows, when that version needs other Python
+    packages than the ones installed, the offline zip instead: a work PC that
+    reaches GitHub cannot always reach pypi.org.
+    """
+    tag = f"v{version}"
+    sums = _sums(tag)
+    small, offline = f"EdgeBench-{version}-windows.zip", f"EdgeBench-{version}-windows-offline.zip"
+    if small not in sums:
+        raise UpdateError(f"The release {tag} has no {small}.")
+    folder = work(install) / "downloads"
+    _rmtree(folder)                                   # never more than one version lying around
+    folder.mkdir(parents=True)
+    say(f"Downloading {C['app']['name']} {version} from GitHub ...")
+    z = download(_asset(tag, small), folder / small, sums[small], progress, cancelled)
+    if WINDOWS and offline in sums and _needs_packages(z, install):
+        say("This version needs other Python packages: downloading the offline package ...")
+        z = download(_asset(tag, offline), folder / offline, sums[offline], progress, cancelled)
+    return z
+
+
 # ---------------------------------------------------------- install folder
 
 def work(install: Path) -> Path:
@@ -393,13 +613,13 @@ def ensure_deps(install: Path) -> bool:
                          capture_output=True, text=True, encoding="utf-8").stdout.strip()
     wheels = install / "wheels" / tag
     cmd = [str(py), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(req)]
-    if wheels.is_dir():
+    if wheels.is_dir() and WINDOWS:                   # the offline zip's wheels are win_amd64
         cmd[4:4] = ["--no-index", "--find-links", str(wheels)]
         say(f"Installing Python packages from {wheels} (offline) ...")
     else:
         say("Installing Python packages from the internet (pypi.org) ...")
     if _pip(cmd) != 0:
-        hint = "" if wheels.is_dir() else " Without internet, use the -offline zip."
+        hint = "" if wheels.is_dir() and WINDOWS else " Without internet, use the -offline zip."
         raise UpdateError(f"Installing the Python packages failed.{hint}")
     stamp.write_text(want, encoding="utf-8")
     return True
@@ -430,7 +650,7 @@ def ensure_optional(install: Path, force: bool = False) -> str:
                          capture_output=True, text=True, encoding="utf-8").stdout.strip()
     wheels = install / "wheels" / tag
     cmd = [str(py), "-m", "pip", "install", "--disable-pip-version-check", "-c", str(req), "-r", str(opt)]
-    if wheels.is_dir():
+    if wheels.is_dir() and WINDOWS:
         cmd[4:4] = ["--no-index", "--find-links", str(wheels)]
     else:                                              # no internet must not hold a start up for long
         cmd[4:4] = ["--retries", "0", "--timeout", str(U["optional_pip_timeout_s"])]
@@ -669,11 +889,20 @@ def prepare(install: Path) -> int:
     return 0
 
 
+def _console_progress(done: int, total: int | None) -> None:
+    try:
+        print(f"\r  {done / 1e6:,.1f}" + (f" of {total / 1e6:,.1f}" if total else "") + " MB   ",
+              end="" if total is None or done < total else "\n", flush=True)
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="updater.py", description="Install or roll back an Edge Bench version.")
     ap.add_argument("package", nargs="?", help="zip or unzipped folder (default: newest in the update folder)")
     ap.add_argument("--force", action="store_true", help="also install the same or an older version")
     ap.add_argument("--rollback", action="store_true", help="go back to the version before the last update")
+    ap.add_argument("--github", action="store_true", help="install the newest GitHub release")
     ap.add_argument("--optional", action="store_true", help="install the optional speed-up packages (again)")
     ap.add_argument("--prepare", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--apply", type=Path, help=argparse.SUPPRESS)
@@ -698,19 +927,34 @@ def main(argv: list[str] | None = None) -> int:
         pid = stop_running()
         return rollback(install, wait_pid=pid, restart=not a.no_restart, **kw)
     try:
+        current = installed_version(install)
         if a.package:
             src = Path(a.package)
         else:
-            folder = update_folder()
-            if not folder:
-                say("No update folder is set (App tab -> Updates), and no package was given.\n"
+            folder = None if a.github else update_folder()
+            pkg = find_update(folder, current) if folder else None
+            ask_github = a.github or github_enabled()
+            if not folder and not ask_github:
+                say("No update folder is set and GitHub is switched off (App tab -> Updates).\n"
                     "Drag an EdgeBench-...-windows.zip onto 'Update Edge Bench.bat'.")
                 return 1
-            pkg = find_update(folder, installed_version(install))
-            if pkg is None:
-                say(f"No newer version in {folder}; {installed_version(install)} is up to date.")
+            remote = None
+            if ask_github:
+                if is_source_checkout(install):
+                    raise UpdateError("This is a source folder (git): update it with  git pull  instead.")
+                try:
+                    remote = find_github(current, force=True)
+                except UpdateError:
+                    if pkg is None:
+                        raise                         # nothing else to install: say why
+            if remote is not None and (pkg is None or vtuple(remote.version) > vtuple(pkg.version)):
+                src = fetch_github(install, remote.version, progress=_console_progress)
+            elif pkg is not None:
+                src = pkg.source
+            else:
+                where = " or ".join(w for w in ((f"in {folder}" if folder else ""), ("on GitHub" if ask_github else "")) if w)
+                say(f"No newer version {where}; {current} is up to date.")
                 return 0
-            src = pkg.source
         staged = stage(src, install, force=a.force)
     except UpdateError as exc:
         say(str(exc))

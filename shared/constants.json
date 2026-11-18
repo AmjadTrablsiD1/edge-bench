@@ -192,6 +192,7 @@
     "heartbeat_ms": 2000,
     "heartbeat_misses": 2,
     "fast_poll_ms": 1500,
+    "update_poll_ms": 700,
     "rail_px": 248,
     "inspector_px": 330,
     "results_px": 236,
@@ -330,6 +331,18 @@
       ".git"
     ],
     "deps_stamp": "edge-bench-requirements.sha256",
+    "github": {
+      "_comment": "Updates from GitHub releases. Only the plain web pages are used (no API: 60 requests an hour per network, which a whole office shares). A release vX.Y.Z carries both Windows zips and SHA256SUMS.txt (scripts/release.sh --github).",
+      "repo": "AmjadTrablsiD1/edge-bench",
+      "site": "https://github.com",
+      "raw": "https://raw.githubusercontent.com",
+      "sums": "SHA256SUMS.txt",
+      "settings_key": "update_github",
+      "timeout_s": 20,
+      "check_every_s": 3600,
+      "cache_name": "github-latest.json",
+      "chunk_bytes": 1048576
+    },
     "optional_requirements": "requirements-fast.txt",
     "optional_stamp": "edge-bench-optional.sha256",
     "optional_pip_timeout_s": 8,

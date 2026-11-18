@@ -30,7 +30,7 @@ PROGRAM = ["app", "server", "shared", "main.py", "updater.py", "requirements.txt
 
 
 def build_package(out: Path, version: str, *, broken: bool = False, offline: bool = False,
-                  extra_req: str = "", updater_src: Path | None = None) -> Path:
+                  extra_req: str = "", updater_src: Path | None = None, github: str = "http://127.0.0.1:9") -> Path:
     """An EdgeBench-<version>-windows.zip the way make_windows_package.sh lays it out."""
     stage = out / f"stage-{version}{'-offline' if offline else ''}" / "EdgeBench"
     shutil.rmtree(stage.parent, ignore_errors=True)
@@ -46,6 +46,7 @@ def build_package(out: Path, version: str, *, broken: bool = False, offline: boo
         shutil.copy2(updater_src, stage / "updater.py")
     c = json.loads((stage / "shared" / "constants.json").read_text(encoding="utf-8"))
     c["app"]["version"] = version
+    c["update"]["github"].update(site=github, raw=github, timeout_s=5)       # never the real GitHub
     (stage / "shared" / "constants.json").write_text(json.dumps(c, indent=2, ensure_ascii=False), encoding="utf-8")
     log = (stage / "CHANGELOG.md").read_text(encoding="utf-8")
     (stage / "CHANGELOG.md").write_text(log.replace("# Changelog\n", f"# Changelog\n\n## {version} — test\n"
@@ -87,6 +88,14 @@ def tree(root: Path) -> dict[str, str]:
         if p.is_file() and not rel.startswith(".update/") and "__pycache__" not in rel:
             out[rel] = hashlib.sha1(p.read_bytes()).hexdigest()
     return out
+
+
+@pytest.fixture(autouse=True)
+def no_real_github(monkeypatch):
+    """No test reaches github.com: in-process code asks a port where nothing listens."""
+    monkeypatch.setitem(updater.G, "site", "http://127.0.0.1:9")
+    monkeypatch.setitem(updater.G, "raw", "http://127.0.0.1:9")
+    monkeypatch.setitem(updater.G, "timeout_s", 2)
 
 
 @pytest.fixture
@@ -217,8 +226,9 @@ def test_update_from_the_update_folder(pkgs, tmp_path, home):
     share = tmp_path / "share"
     share.mkdir()
     build_package(share, "1.3.0")
+    updater.set_github_enabled(False)
     r = run_updater(install, home=home)
-    assert r.returncode == 1 and "No update folder is set" in r.stdout
+    assert r.returncode == 1 and "No update folder is set and GitHub is switched off" in r.stdout
     updater.set_update_folder(str(share))
     assert run_updater(install, home=home).returncode == 0
     assert updater.installed_version(install) == "1.3.0"
@@ -281,13 +291,18 @@ def test_packages_follow_requirements(tmp_path, monkeypatch):
     (install / "requirements.txt").write_text("numpy==2.5.5\n", encoding="utf-8")
     tag = f"cp{sys.version_info[0]}{sys.version_info[1]}"
     (install / "wheels" / tag).mkdir(parents=True)
+    monkeypatch.setattr(updater, "WINDOWS", False)                          # win_amd64 wheels: never elsewhere
+    assert updater.ensure_deps(install) and "--no-index" not in calls[-1]
+    (install / "requirements.txt").write_text("numpy==2.5.55\n", encoding="utf-8")
+    monkeypatch.setattr(updater, "WINDOWS", True)
+    monkeypatch.setattr(updater, "venv_python", lambda root: root / ".venv" / "bin" / "python3")
     assert updater.ensure_deps(install) and calls[-1][4:7] == ["--no-index", "--find-links", str(install / "wheels" / tag)]
     (install / "requirements.txt").write_text("numpy==2.5.6\n", encoding="utf-8")
     monkeypatch.setattr(updater, "_pip", lambda cmd: 1)
     with pytest.raises(updater.UpdateError, match="Installing the Python packages failed"):
         updater.ensure_deps(install)
     stamp = (install / ".venv" / updater.U["deps_stamp"]).read_text(encoding="utf-8")
-    assert stamp == hashlib.sha256(b"numpy==2.5.5\n").hexdigest()          # still the last good one
+    assert stamp == hashlib.sha256(b"numpy==2.5.55\n").hexdigest()         # still the last good one
 
 
 # ---------------------------------------------------------------- the app
@@ -412,6 +427,8 @@ def test_the_optional_speed_up_can_never_fail_an_update_or_a_start(tmp_path, mon
     opt.write_text("numba==0.69.0\n", encoding="utf-8")
     tag = f"cp{sys.version_info[0]}{sys.version_info[1]}"
     (install / "wheels" / tag).mkdir(parents=True)
+    monkeypatch.setattr(updater, "WINDOWS", True)                               # the offline wheels are Windows'
+    monkeypatch.setattr(updater, "venv_python", lambda root: root / ".venv" / "bin" / "python3")
     monkeypatch.setattr(updater, "_pip", lambda cmd: calls.append(cmd) or int("-c" in cmd))    # only the optional list fails
     assert updater.ensure_optional(install) == "failed"
     assert calls[-1][4:7] == ["--no-index", "--find-links", str(install / "wheels" / tag)] and "--retries" not in calls[-1]
@@ -441,3 +458,235 @@ def test_an_update_still_succeeds_when_the_speed_up_cannot_be_installed(tmp_path
     monkeypatch.setattr(updater, "ensure_optional", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
     assert updater.apply(updater.stage(new, install), install, wait_pid=None, restart=False, pause=False) == 0
     assert updater.installed_version(install) == "1.1.0" and updater.last_result(install)["ok"]
+
+
+# ---------------------------------------------------------------- GitHub
+
+import http.server  # noqa: E402
+import threading  # noqa: E402
+
+
+class FakeGitHub:
+    """github.com and raw.githubusercontent.com as the updater uses them, on 127.0.0.1."""
+
+    def __init__(self) -> None:
+        self.files: dict[str, bytes] = {}
+        self.latest: str | None = None
+        self.requests: list[str] = []
+        self.slow = 0.0                                     # seconds per 64 kB, to cancel a download
+        fake = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                fake.requests.append(self.path)
+                repo = updater.G["repo"]
+                if self.path == f"/{repo}/releases/latest":
+                    self.send_response(302)
+                    self.send_header("Location", f"{fake.url}/{repo}/releases" +
+                                     (f"/tag/v{fake.latest}" if fake.latest else ""))
+                    self.end_headers()
+                    return
+                body = fake.files.get(self.path)
+                if body is None:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                for i in range(0, len(body), 65536):
+                    if fake.slow:
+                        time.sleep(fake.slow)
+                    try:
+                        self.wfile.write(body[i:i + 65536])
+                    except OSError:
+                        return
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def publish(self, pkgs: Path, version: str, *, tamper: str | None = None, sums: bool = True,
+                offline: bool = False, **kw) -> None:
+        """Release `version` the way scripts/release.sh --github does: zips, SHA256SUMS.txt, a tag."""
+        repo, tag = updater.G["repo"], f"v{version}"
+        names = [build_package(pkgs, version, github=self.url, **kw)]
+        if offline:
+            names.append(build_package(pkgs, version, offline=True, github=self.url, **kw))
+        lines = []
+        for z in names:
+            data = z.read_bytes()
+            lines.append(f"{hashlib.sha256(data).hexdigest()}  {z.name}")
+            self.files[f"/{repo}/releases/download/{tag}/{z.name}"] = (data[:-10] + b"x" * 10) if tamper == z.name else data
+        if sums:
+            self.files[f"/{repo}/releases/download/{tag}/SHA256SUMS.txt"] = ("\n".join(lines) + "\n").encode()
+        with zipfile.ZipFile(names[0]) as zf:
+            self.files[f"/{repo}/{tag}/CHANGELOG.md"] = zf.read("EdgeBench/CHANGELOG.md")
+        self.latest = version
+
+
+@pytest.fixture
+def github(monkeypatch, home):
+    gh = FakeGitHub()
+    monkeypatch.setitem(updater.G, "site", gh.url)
+    monkeypatch.setitem(updater.G, "raw", gh.url)
+    srv.UPD.__init__()                                     # nothing left from another test
+    yield gh
+    gh.server.shutdown()
+    srv.UPD.__init__()
+
+
+def test_github_finds_the_newest_release_and_asks_at_most_hourly(github, pkgs):
+    assert updater.find_github("1.0.0", force=True) is None               # no release yet
+    github.publish(pkgs, "1.2.0")
+    assert updater.find_github("1.0.0") is None                           # asked within the hour: cached
+    asked = len(github.requests)
+    r = updater.find_github("1.0.0", force=True)
+    assert r.version == "1.2.0" and r.notes[0]["items"] == ["Feature of 1.2.0."]
+    assert len(github.requests) == asked + 2                              # latest + CHANGELOG, never the API
+    assert all(not p.startswith("/repos/") for p in github.requests)
+    assert updater.find_github("1.0.0").version == "1.2.0" and len(github.requests) == asked + 2
+    assert updater.find_github("1.2.0") is None                           # not newer
+    pub = r.public()
+    assert pub["remote"] and pub["source"] == "github:v1.2.0" and pub["url"].endswith("/releases/tag/v1.2.0")
+
+
+def test_github_unreachable_is_said_plainly(monkeypatch, home):
+    with pytest.raises(updater.UpdateError, match="Cannot reach GitHub .*proxy"):
+        updater.find_github("1.0.0", force=True)
+
+
+def test_a_download_is_kept_only_when_it_matches_its_checksum(github, pkgs, tmp_path):
+    install = install_from(build_package(pkgs, "1.0.0"), tmp_path / "inst")
+    github.publish(pkgs, "1.1.0", tamper="EdgeBench-1.1.0-windows.zip")
+    with pytest.raises(updater.UpdateError, match="did not arrive intact"):
+        updater.fetch_github(install, "1.1.0")
+    assert not any((updater.work(install) / "downloads").iterdir())       # nothing half-made left
+    github.publish(pkgs, "1.1.1", sums=False)
+    with pytest.raises(updater.UpdateError, match="404"):
+        updater.fetch_github(install, "1.1.1")
+    github.files[f"/{updater.G['repo']}/releases/download/v1.1.1/SHA256SUMS.txt"] = b"<html>not a checksum list</html>"
+    with pytest.raises(updater.UpdateError, match="has no checksums"):
+        updater.fetch_github(install, "1.1.1")
+    github.publish(pkgs, "1.1.2")
+    seen = []
+    z = updater.fetch_github(install, "1.1.2", progress=lambda d, t: seen.append((d, t)))
+    assert z.name == "EdgeBench-1.1.2-windows.zip" and updater.read_package(z, "1.0.0").version == "1.1.2"
+    assert seen[-1][0] == seen[-1][1] == z.stat().st_size
+    with pytest.raises(updater.Cancelled):
+        updater.fetch_github(install, "1.1.2", cancelled=lambda: True)
+    assert not any((updater.work(install) / "downloads").iterdir())
+
+
+def test_the_offline_zip_only_when_a_version_needs_other_packages(github, pkgs, tmp_path, monkeypatch):
+    install = install_from(build_package(pkgs, "1.0.0"), tmp_path / "inst")
+    monkeypatch.setattr(updater, "WINDOWS", True)
+    github.publish(pkgs, "1.1.0", offline=True)
+    stamp = install / ".venv" / updater.U["deps_stamp"]
+    stamp.write_text(hashlib.sha256((install / "requirements.txt").read_bytes()).hexdigest(), encoding="utf-8")
+    assert updater.fetch_github(install, "1.1.0").name == "EdgeBench-1.1.0-windows.zip"          # same packages
+    github.publish(pkgs, "1.2.0", offline=True, extra_req="tomli==2.2.1")
+    assert updater.fetch_github(install, "1.2.0").name == "EdgeBench-1.2.0-windows-offline.zip"  # new ones
+    monkeypatch.setattr(updater, "WINDOWS", False)                        # its wheels would not fit here
+    assert updater.fetch_github(install, "1.2.0").name == "EdgeBench-1.2.0-windows.zip"
+
+
+def test_update_edge_bench_bat_updates_from_github(github, pkgs, tmp_path, home):
+    """What double-clicking 'Update Edge Bench.bat' does: no folder set -> GitHub -> installed."""
+    install = install_from(build_package(pkgs, "1.0.0", github=github.url), tmp_path / "inst")
+    r = run_updater(install, home=home)
+    assert r.returncode == 0 and "No newer version on GitHub; 1.0.0 is up to date." in r.stdout
+    github.publish(pkgs, "1.1.0")
+    r = run_updater(install, home=home)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert updater.installed_version(install) == "1.1.0" and updater.previous_version(install) == "1.0.0"
+    assert (install / "my notes.txt").read_text(encoding="utf-8") == "the user's own file"
+    assert "Downloading Edge Bench 1.1.0 from GitHub" in r.stdout
+    # a folder with a newer version wins; GitHub's newer one wins over an older folder
+    share = tmp_path / "share"
+    share.mkdir()
+    build_package(share, "1.2.0", github=github.url)
+    github.publish(pkgs, "1.3.0")
+    updater.set_update_folder(str(share))
+    assert run_updater(install, home=home).returncode == 0 and updater.installed_version(install) == "1.3.0"
+    build_package(share, "1.5.0", github=github.url)                    # now the folder is ahead of GitHub (1.3.0)
+    r = run_updater(install, home=home)
+    assert r.returncode == 0 and updater.installed_version(install) == "1.5.0" and "from GitHub" not in r.stdout
+    github.publish(pkgs, "1.5.0")                                       # a tie: the folder's, no download
+    build_package(share, "1.6.0", github=github.url)
+    github.publish(pkgs, "1.6.0")
+    r = run_updater(install, home=home)
+    assert r.returncode == 0 and updater.installed_version(install) == "1.6.0" and "from GitHub" not in r.stdout
+    # GitHub gone: said, nothing changed
+    github.server.shutdown()
+    github.server.server_close()
+    github.latest = "9.0.0"
+    updater.set_update_folder(None)
+    r = run_updater(install, "--github", home=home)
+    assert r.returncode == 1 and "Cannot reach GitHub" in r.stdout and updater.installed_version(install) == "1.6.0"
+
+
+def _wait(client, cond, timeout=30):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        s = client.get("/api/update").json()
+        if cond(s):
+            return s
+        time.sleep(0.05)
+    raise AssertionError(f"timed out: {s}")
+
+
+def test_the_app_offers_downloads_and_installs_a_github_release(github, pkgs, tmp_path, monkeypatch, client):
+    install = install_from(build_package(pkgs, "1.0.0"), tmp_path / "inst")
+    monkeypatch.setattr(srv, "UPDATE_ROOT", install)
+    monkeypatch.setitem(srv.C.app, "version", "1.0.0")
+    launched = []
+    monkeypatch.setattr(updater, "launch", lambda root, **kw: launched.append((root, kw)))
+
+    class Server:
+        should_exit = False
+
+    srv.api.state.server = Server()
+    s = _wait(client, lambda s: s["github"]["state"] == "done")          # the first look starts by itself
+    assert s["available"] is None and s["github"]["enabled"] and s["github"]["checked"]
+    github.publish(pkgs, "1.1.0")
+    s = client.post("/api/update/check").json()
+    s = _wait(client, lambda s: s["github"]["state"] == "done")
+    pkg = s["available"]
+    assert pkg["version"] == "1.1.0" and pkg["remote"] and pkg["notes"][0]["items"] == ["Feature of 1.1.0."]
+
+    # a damaged download: said, nothing launched, the app keeps running
+    github.publish(pkgs, "1.1.0", tamper="EdgeBench-1.1.0-windows.zip")
+    client.post("/api/update/download", json={"version": "1.1.0"})
+    s = _wait(client, lambda s: s["download"]["state"] == "error")
+    assert "did not arrive intact" in s["download"]["error"] and not launched and not srv.api.state.server.should_exit
+
+    # cancelled half-way
+    github.publish(pkgs, "1.1.0")
+    github.slow = 0.05
+    monkeypatch.setitem(updater.G, "chunk_bytes", 16384)
+    client.post("/api/update/download", json={"version": "1.1.0"})
+    _wait(client, lambda s: s["download"]["done"] > 0)
+    assert client.post("/api/update/download", json={"version": "1.1.0"}).status_code == 409   # one at a time
+    client.post("/api/update/cancel")
+    s = _wait(client, lambda s: s["download"]["state"] == "idle")
+    assert not launched
+
+    # the real thing: downloaded, verified, staged, handed over, the app quits
+    github.slow = 0
+    client.post("/api/update/download", json={"version": "1.1.0"})
+    s = _wait(client, lambda s: s["download"]["state"] == "installing")
+    root, kw = launched[0]
+    assert root == install and updater.installed_version(kw["staged"]) == "1.1.0"
+    time.sleep(0.5)
+    assert srv.api.state.server.should_exit
+
+    # switched off: no check, no offer
+    s = client.post("/api/update/github", json={"enabled": False}).json()
+    assert s["github"]["state"] == "off" and s["available"] is None and not updater.github_enabled()
+    monkeypatch.setattr(srv, "UPDATE_ROOT", ROOT)                         # a git folder: git pull
+    r = client.post("/api/update/download", json={"version": "1.1.0"})
+    assert r.status_code == 422 and "git pull" in r.json()["detail"]

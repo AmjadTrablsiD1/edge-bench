@@ -4,6 +4,9 @@
 #   scripts/release.sh 0.4.0                       test, build, commit, tag
 #   scripts/release.sh 0.4.0 --publish DIR         ... and copy the zips to DIR
 #                                                  (the update folder the PCs watch)
+#   scripts/release.sh 0.4.0 --github              ... and publish it on GitHub: every
+#                                                  installed copy offers it from there
+#                                                  (scripts/publish_github.sh)
 #   scripts/release.sh 0.4.0 --no-tests            skip pytest + Playwright (not advised)
 #
 # Write the "## 0.4.0 — <date>" section in CHANGELOG.md first: the app shows it
@@ -14,11 +17,12 @@ cd "$SRC"
 
 VER="${1:-}"
 shift || true
-PUBLISH="" TESTS=1
+PUBLISH="" TESTS=1 GITHUB=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --publish) PUBLISH="$2"; shift 2 ;;
     --no-tests) TESTS=0; shift ;;
+    --github) GITHUB=1; shift ;;
     *) echo "unknown option $1"; exit 2 ;;
   esac
 done
@@ -30,6 +34,10 @@ python3 -c "import sys; v=lambda s: tuple(map(int, s.split('.'))); sys.exit(0 if
 grep -qE "^## $VER( |$)" CHANGELOG.md || { echo "CHANGELOG.md has no '## $VER — <date>' section yet"; exit 1; }
 [ -z "$(git status --porcelain)" ] || { echo "commit or stash your changes first"; git status --short; exit 1; }
 [ -z "$PUBLISH" ] || [ -d "$PUBLISH" ] || { echo "publish folder $PUBLISH does not exist"; exit 1; }
+if [ "$GITHUB" = 1 ]; then                 # fail before building, not after
+  if command -v gh >/dev/null; then gh auth status >/dev/null 2>&1 || { echo "gh is not logged in: run  gh auth login"; exit 1; }
+  elif [ -z "${GITHUB_TOKEN:-}" ]; then echo "--github needs the GitHub CLI (gh auth login) or GITHUB_TOKEN"; exit 1; fi
+fi
 
 echo "==> $CUR -> $VER"
 python3 - "$VER" <<'PY'
@@ -58,4 +66,8 @@ echo "==> committed and tagged v$VER"
 if [ -n "$PUBLISH" ]; then
   cp "dist/EdgeBench-$VER-windows.zip" "dist/EdgeBench-$VER-windows-offline.zip" "$PUBLISH/"
   echo "==> copied to $PUBLISH -- PCs watching that folder will offer $VER"
+fi
+
+if [ "$GITHUB" = 1 ]; then
+  bash scripts/publish_github.sh "$VER"
 fi

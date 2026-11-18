@@ -78,12 +78,18 @@ export interface Wave { t0: number; t1: number; px: number; channels: WaveChanne
 export interface UpdateNotes { version: string; date: string; items: string[] }
 export interface UpdatePackage {
   source: string; name: string; version: string; offline: boolean; newer: boolean; notes: UpdateNotes[];
+  remote?: boolean;             // a GitHub release: downloaded when installed
+  url?: string;
 }
 export interface UpdateInfo {
   current: string; folder: string | null; available: UpdatePackage | null; error: string | null;
   source_checkout: boolean; previous: string | null;
   last: { ok: boolean; kind: "update" | "rollback"; from: string | null; to: string | null;
           error: string | null; time: number } | null;
+  github: { enabled: boolean; repo: string; url: string; state: "off" | "idle" | "checking" | "done" | "error";
+            error: string | null; checked: number | null };
+  download: { state: "idle" | "downloading" | "installing" | "error"; version: string | null;
+              done: number; total: number | null; error: string | null };
 }
 
 export interface AppStatus {

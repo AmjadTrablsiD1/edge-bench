@@ -18,6 +18,8 @@ export default defineConfig({
     command: `.venv/bin/python main.py --no-browser --port ${PORT}`,
     url: `http://127.0.0.1:${PORT}/api/whoami`,
     reuseExistingServer: false,
+    // never the real GitHub: update checks go to a closed port (and say "not reachable")
+    env: { EDGE_BENCH_GITHUB_SITE: "http://127.0.0.1:9", EDGE_BENCH_GITHUB_RAW: "http://127.0.0.1:9" },
     timeout: 30_000,
   },
 });

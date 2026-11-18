@@ -181,6 +181,10 @@ dl.evidence dd.path { font-size: 10px; }
 .update-card { border: 1px solid var(--activeLine); border-radius: 6px; padding: 10px 12px; margin: 4px 0 10px; }
 .update-card .notes-head { font-size: 11px; color: var(--muted); margin: 8px 0 4px; }
 .warn-text { color: var(--coral); }
+.progress { height: 6px; border-radius: 3px; background: var(--lineSoft); overflow: hidden; margin: 2px 0 8px; }
+.progress span { display: block; height: 100%; background: var(--accent); transition: width var(--motion, 150ms) linear; }
+.progress span.indeterminate { animation: slide 1.2s ease-in-out infinite; }
+@keyframes slide { from { margin-left: -30%; } to { margin-left: 100%; } }
 .cover-list { margin: 0; padding-left: 16px; font-size: 11px; line-height: 1.6; color: var(--secondary); display: flex; flex-direction: column; gap: 4px; }
 .cover-list.ok li::marker { color: var(--positive); }
 .cover-list.no li::marker { color: var(--coral); }

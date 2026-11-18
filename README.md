@@ -100,6 +100,19 @@ internet or proxy is needed). Then on the PC:
 **Updating (since 0.3.0).** Install once by hand as above; from then on,
 updates go in place:
 
+- **From GitHub (since 0.7.0, on by default).** Edge Bench looks at
+  [the releases](https://github.com/AmjadTrablsiD1/edge-bench/releases) when it
+  starts (at most once an hour, or *App → Updates → Check now*) and shows
+  **Update <ver>** in its header with *What's new*. *Download <ver> and
+  restart* fetches the small zip, checks it against the release's
+  `SHA256SUMS.txt`, and installs it as below. When a version needs other
+  Python packages, the offline zip is fetched instead, so the PC never needs
+  pypi.org. Double-clicking `Update Edge Bench.bat` does the same without the
+  app. Only GitHub's ordinary web pages are used, not its API (which allows 60
+  requests an hour per network). Requests go through the PC's proxy settings.
+  If GitHub cannot be reached the app says so and nothing else changes. *Off*
+  in the same panel stops the checks. `EDGE_BENCH_GITHUB_SITE` /
+  `EDGE_BENCH_GITHUB_RAW` point it at a mirror with the same layout.
 - **Update folder.** In *App → Updates → Choose update folder…* pick a folder
   every PC can reach, for example a network share. Copy each new
   `EdgeBench-<ver>-windows[-offline].zip` there, or let
@@ -139,10 +152,14 @@ npm install && npx playwright test     # real UI, both themes, axe, fold probe (
 ```
 
 **Releasing.** Write the `## <ver> — <date>` section in `CHANGELOG.md` (users
-see it as *What's new*), commit, then run `scripts/release.sh <ver> [--publish <folder>]`.
+see it as *What's new*), commit, then run `scripts/release.sh <ver> [--publish <folder>] [--github]`.
 It refuses to release without that section, or from an uncommitted tree. It
 then bumps the version, runs both test suites, builds the two Windows zips,
 commits and tags `v<ver>`, and copies the zips to the update folder.
+With `--github` it then runs `scripts/publish_github.sh <ver>`: pushes `main` and
+the tag, and creates the GitHub release with both zips and `SHA256SUMS.txt`.
+From then on every installed copy offers it. That needs the GitHub CLI
+(`brew install gh`, then `gh auth login`) or a token in `GITHUB_TOKEN`.
 
 UI development with hot reload: `.venv/bin/python main.py --no-browser --port 8791`
 plus `cd ui && npm run dev`. Layers, data flow, and "how to add a format / a

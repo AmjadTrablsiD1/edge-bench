@@ -58,6 +58,80 @@ test(".sal read directly: no Logic 2, every channel measured", async ({ page }, 
   await axe(page);
 });
 
+const UPDATE_EXTRA = {
+  github: { enabled: true, repo: "AmjadTrablsiD1/edge-bench", url: "https://github.com/AmjadTrablsiD1/edge-bench/releases",
+            state: "done", error: null, checked: Date.now() / 1000 - 120 },
+  download: { state: "idle", version: null, done: 0, total: null, error: null },
+};
+
+test("updates: a GitHub release is offered, downloaded with progress, and installed", async ({ page }, info) => {
+  // The download, checksum and install are tested for real in tests/test_updater.py; here the UI around them.
+  const remote = { source: "github:v9.2.0", name: "GitHub release v9.2.0", version: "9.2.0", offline: false, newer: true,
+    remote: true, url: "https://github.com/AmjadTrablsiD1/edge-bench/releases/tag/v9.2.0",
+    notes: [{ version: "9.2.0", date: "2026-12-10", items: ["Updates straight from GitHub."] }] };
+  let state: any = { ...UPDATE_EXTRA, current: constants.app.version, folder: null, available: remote, error: null,
+    source_checkout: false, previous: null, last: null };
+  let steps = 0, asked = "", checked = 0;
+  await page.route("**/api/update", (r) => {
+    if (state.download.state === "downloading" && ++steps > 3) {      // the server moves on by itself
+      const done = Math.min(state.download.done + 60e6, 161e6);
+      state = { ...state, download: { ...state.download, done, state: done >= 161e6 ? "installing" : "downloading" } };
+    }
+    return r.fulfill({ json: state });
+  });
+  await page.route("**/api/update/check", (r) => { checked++; return r.fulfill({ json: state }); });
+  await page.route("**/api/update/download", (r) => {
+    asked = JSON.parse(r.request().postData() ?? "{}").version;
+    state = { ...state, download: { state: "downloading", version: asked, done: 0, total: 161e6, error: null } };
+    return r.fulfill({ json: state });
+  });
+  await page.goto("/");
+  await expect(page.locator("[data-test=update-chip]")).toHaveText(/Update 9\.2\.0/);
+  await expect(page.locator("[data-test=update-chip]")).toHaveAttribute("title", /on GitHub/);
+  await page.locator("[data-test=update-chip]").click();
+  const well = page.locator("[data-test=updates]");
+  await expect(well.locator("[data-test=update-github]")).toHaveText("AmjadTrablsiD1/edge-bench · checked 2 min ago");
+  await expect(well.locator("[data-test=update-available]")).toContainText("Edge Bench 9.2.0 is available on GitHub.");
+  await expect(well.locator("[data-test=update-available]")).toContainText("Updates straight from GitHub.");
+  await well.locator("[data-test=update-check]").click();
+  expect(checked).toBe(1);
+  await page.screenshot({ path: `${SHOTS}/${info.project.name}-19-github.png` });
+  await axe(page);
+  await well.locator("[data-test=update-install]").click();
+  expect(asked).toBe("9.2.0");
+  await expect(well.locator("[data-test=update-progress]")).toContainText("Downloading 9.2.0 — 0.0 MB of 161 MB");
+  await expect(well.locator("[data-test=update-progress] [role=progressbar]")).toBeVisible();
+  await axe(page);
+  await expect(page.locator("[data-test=updating]")).toContainText("Updating to 9.2.0", { timeout: 15_000 });
+  errors.length = 0;                       // the page now waits for a restart
+});
+
+test("updates: GitHub not reachable, a failed download, and switching GitHub off", async ({ page }) => {
+  let state: any = { ...UPDATE_EXTRA, current: constants.app.version, folder: null, available: null, error: null,
+    source_checkout: false, previous: null, last: null,
+    github: { ...UPDATE_EXTRA.github, state: "error", error: "Cannot reach GitHub (timed out). Check the internet connection or the proxy; an update folder or a downloaded zip works without it." },
+    download: { state: "error", version: "9.2.0", done: 0, total: null, error: "EdgeBench-9.2.0-windows.zip did not arrive intact (its checksum does not match); nothing was installed" } };
+  let switched: boolean | null = null;
+  await page.route("**/api/update", (r) => r.fulfill({ json: state }));
+  await page.route("**/api/update/github", (r) => {
+    switched = JSON.parse(r.request().postData() ?? "{}").enabled;
+    state = { ...state, github: { ...state.github, enabled: false, state: "off", error: null } };
+    return r.fulfill({ json: state });
+  });
+  await page.goto("/");
+  await page.locator("[data-test=tab-app]").click();
+  const well = page.locator("[data-test=updates]");
+  await expect(well.locator("[data-test=update-github]")).toHaveText("AmjadTrablsiD1/edge-bench · not reachable");
+  await expect(well.locator("[data-test=update-github-error]")).toContainText("Cannot reach GitHub");
+  await expect(well.locator("[data-test=update-download-error]")).toContainText("Downloading 9.2.0 failed: EdgeBench-9.2.0-windows.zip did not arrive intact");
+  await expect(well.locator("[data-test=update-download-error]")).toContainText("Nothing was changed.");
+  await axe(page);
+  await well.locator("[data-test=update-github-switch] button", { hasText: "Off" }).click();
+  expect(switched).toBe(false);
+  await expect(well.locator("[data-test=update-github]")).toHaveText("off");
+  await expect(well.locator("[data-test=update-check]")).toHaveCount(0);
+});
+
 test("updates: this source folder says git pull", async ({ page }) => {
   await page.goto("/");
   await page.locator("[data-test=tab-app]").click();
@@ -74,6 +148,7 @@ test("updates: an update in the folder is offered, installed, and a failure is s
     version: "9.1.0", offline: true, newer: true,
     notes: [{ version: "9.1.0", date: "2026-12-01", items: ["Faster overview.", "Repeated cycles."] }] };
   await page.route("**/api/update", (r) => r.fulfill({ json: {
+    ...UPDATE_EXTRA,
     current: constants.app.version, folder: "S:/share", available: next, error: null, source_checkout: false,
     previous: "0.2.0", last: { ok: false, kind: "update", from: constants.app.version, to: "9.0.0",
       error: "The new version did not pass its start-up check", time: Date.now() / 1000 } } }));
