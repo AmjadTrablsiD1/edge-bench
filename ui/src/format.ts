@@ -100,3 +100,11 @@ export function niceStep(span: number, maxTicks: number): number {
   for (const m of [1, 2, 5, 10]) if (m * p >= raw) return m * p;
   return 10 * p;
 }
+
+/** "PWR_GOOD rising #1", or "Cursor" for a cursor reference. */
+export function refLabel(r: { channel: number | null; name: string; edge: string; occurrence: number }): string {
+  return r.channel === null ? r.name : `${r.name} ${r.edge} #${r.occurrence}`;
+}
+
+/** ↑ / ↓ after a reference edge; nothing after a cursor. */
+export const refArrow = (edge: string) => (edge === "rising" ? " ↑" : edge === "falling" ? " ↓" : "");

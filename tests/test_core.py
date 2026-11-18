@@ -16,6 +16,7 @@ from openpyxl import load_workbook
 
 from app import excel, measure, readers, waveform
 from app.capture import Channel, Segment
+from app.constants import C
 from app.edges import count_in, find_edge
 from app.readers import binary, csv_digital, sal
 from tests import synth
@@ -347,3 +348,58 @@ def test_measure_and_view_do_not_copy_a_memory_mapped_channel(tmp_path):
         tracemalloc.stop()
     assert r.channels
     assert peak < 4_000_000                      # one copy of a channel would be 16 MB
+
+
+# ---- cursor reference ----------------------------------------------------------
+
+def _first_at_or_after(times, t):
+    times = np.asarray(times)
+    i = int(np.searchsorted(times, t, side="left"))
+    return float(times[i]) if i < times.size else None
+
+
+@pytest.mark.parametrize("where", [0.2, 0.5, 0.8])
+def test_cursor_reference_measures_every_channel_from_a_time(where):
+    cap = csv_digital.load(Path(__file__).parent / "fixtures" / "power_up_sequence.csv")
+    t = cap.begin + where * (cap.end - cap.begin)
+    r = measure.run(cap, measure.Settings(ref_mode="cursor", cursor_s=t, excluded=[2]))
+    assert r.reference.channel is None and r.reference.name == "Cursor" and r.reference.time == t
+    assert r.reference.describe() == "Cursor"
+    for c in r.channels:
+        if c.index == 2:
+            assert c.status == "excluded"                           # no channel is "the reference"
+            continue
+        ch = cap.channel(c.index)
+        want = _first_at_or_after(ch.segments[0].times, t)
+        assert c.level_at_ref == ch.level_at(t)
+        if want is None:
+            assert c.status == "no_edge"
+        else:
+            assert c.status == "ok" and c.time == want and c.dt == pytest.approx(want - t, abs=1e-15)
+    assert not any(c.status == "reference" for c in r.channels)
+
+
+def test_cursor_on_an_edge_counts_that_edge_and_outside_the_capture_is_said():
+    cap = csv_digital.load(Path(__file__).parent / "fixtures" / "power_up_sequence.csv")
+    ch = next(c for c in cap.channels if c.edge_count)
+    e = float(ch.segments[0].times[0])
+    r = measure.run(cap, measure.Settings(ref_mode="cursor", cursor_s=e))
+    assert next(c for c in r.channels if c.index == ch.index).dt == 0.0      # same rule as an edge: Δt = 0
+    far = measure.run(cap, measure.Settings(ref_mode="cursor", cursor_s=cap.end + 1))
+    assert far.reference is None and any("outside this capture" in n for n in far.notes)
+    assert {c.status for c in far.channels} <= {"no_edge", "excluded"}
+    with pytest.raises(ValueError, match="place the cursor"):
+        measure.Settings.from_dict({"ref_mode": "cursor"})
+    with pytest.raises(ValueError, match="place the cursor"):
+        measure.Settings.from_dict({"ref_mode": "cursor", "cursor_s": float("nan")})
+
+
+def test_cursor_reference_in_excel(tmp_path):
+    cap = csv_digital.load(Path(__file__).parent / "fixtures" / "power_up_sequence.csv")
+    t = (cap.begin + cap.end) / 2
+    out = tmp_path / "c.xlsx"
+    excel.write([measure.run(cap, measure.Settings(ref_mode="cursor", cursor_s=t))], out, unit="µs")
+    wb = load_workbook(out)
+    st = {r[0]: r[1] for r in wb[C.excel.sheet_settings].iter_rows(values_only=True) if r[0]}
+    assert st["Reference mode"].startswith("cursor") and st["Reference edge"] == "—"
+    assert any(isinstance(v, str) and v.startswith(f"Cursor at {t:.9f} s") for v in st.values())

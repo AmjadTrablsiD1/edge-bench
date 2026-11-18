@@ -6,7 +6,7 @@ import type { EdgeKind, MatchBy, Settings, Tolerance } from "./types";
 import type { Quantity } from "./components/ui";
 
 export interface Form {
-  refMode: "manual" | "auto";
+  refMode: "manual" | "auto" | "cursor";
   refChannel: number | null;
   refEdge: EdgeKind;
   occurrence: string;
@@ -25,6 +25,7 @@ export interface Form {
   tolDutyPct: string;
   span: Quantity;
   matchBy: MatchBy;
+  cursors: Record<string, Quantity>;   // cursor reference: per capture (file path), time in capture
 }
 
 const KEY = `${C.ui.storage_prefix}.form.v2`;
@@ -50,6 +51,7 @@ export const DEFAULT_FORM: Form = {
   tolDutyPct: clean(C.compare.duty_abs * 100),
   span: { text: "", unit: "ms" },
   matchBy: C.compare.default_match as MatchBy,
+  cursors: {},
 };
 
 export function loadForm(): Form {
@@ -64,7 +66,7 @@ export function saveForm(f: Form): void {
   try { localStorage.setItem(KEY, JSON.stringify(f)); } catch { /* storage blocked */ }
 }
 
-export type FormErrors = Partial<Record<"occurrence" | "searchFrom" | "window" | "glitch" | "refChannel", string>>;
+export type FormErrors = Partial<Record<"occurrence" | "searchFrom" | "window" | "glitch" | "refChannel" | "cursor" | "cursorB", string>>;
 
 function seconds(q: Quantity): number | null {
   const v = parseDecimal(q.text);
@@ -72,8 +74,20 @@ function seconds(q: Quantity): number | null {
   return v * unitByLabel(q.unit).scale;
 }
 
-/** Form -> Settings, or the per-field reasons it cannot be. */
-export function toSettings(f: Form): { settings: Settings | null; errors: FormErrors } {
+/** The cursor placed on this capture, in seconds: null if none, NaN if the text is not a number. */
+export function cursorSeconds(f: Form, path: string | null | undefined): number | null {
+  const q = path ? f.cursors[path] : undefined;
+  return q ? seconds(q) : null;
+}
+
+/** A cursor time as the form keeps it: in `unit`, with every digit a sample needs. */
+export function cursorQuantity(t: number, unit: string): Quantity {
+  return { text: String(+(t / unitByLabel(unit).scale).toPrecision(12)), unit };
+}
+
+/** Form -> Settings, or the per-field reasons it cannot be.  `cursorPath`: the
+ *  capture whose cursor a cursor reference uses (in Compare: A's). */
+export function toSettings(f: Form, cursorPath: string | null = null): { settings: Settings | null; errors: FormErrors } {
   const errors: FormErrors = {};
   const occ = Number(f.occurrence.trim());
   if (f.refMode === "manual" && (!Number.isInteger(occ) || occ < 1 || occ > C.measure.max_occurrence))
@@ -87,6 +101,9 @@ export function toSettings(f: Form): { settings: Settings | null; errors: FormEr
   if (Number.isNaN(gl)) errors.glitch = "Not a number.";
   else if (gl !== null && gl < 0) errors.glitch = "Cannot be negative.";
   if (f.refMode === "manual" && f.refChannel === null) errors.refChannel = "Choose a reference channel.";
+  const cursor = f.refMode === "cursor" ? cursorSeconds(f, cursorPath) : null;
+  if (f.refMode === "cursor" && cursor === null) errors.cursor = "Double-click the waveform to place the cursor, or type its time.";
+  else if (Number.isNaN(cursor)) errors.cursor = "Not a number.";
   if (Object.keys(errors).length) return { settings: null, errors };
   return {
     errors,
@@ -100,6 +117,7 @@ export function toSettings(f: Form): { settings: Settings | null; errors: FormEr
       window_s: win,
       glitch_s: gl ?? 0,
       excluded: f.excluded,
+      cursor_s: f.refMode === "cursor" ? cursor : null,
     },
   };
 }

@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { chartScale, drawSegments, token, useCanvas } from "../canvas";
 import { C } from "../constants";
-import { measuredText, niceStep, signedTime } from "../format";
+import { measuredText, niceStep, signedTime, refArrow } from "../format";
 import type { CaptureSummary, CompareRow, Comparison, Verdict, Wave } from "../types";
 import type { View } from "./Waveform";
 
@@ -21,6 +21,7 @@ interface Props {
   setView: (v: View) => void;
   selected: number | null;
   onSelect: (index: number) => void;
+  onCursor: (t: number) => void;    // double-click: a cursor at this time after each reference
   theme: string;
 }
 
@@ -173,7 +174,7 @@ export function CompareWave(p: Props) {
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
       const r = p.cmp?.reference_a;
-      ctx.fillText(r ? `REF ${r.name} ${r.edge === "rising" ? "↑" : "↓"} (A and B)` : "REF", x0 + 5 * g.k, 6 * g.k);
+      ctx.fillText(r ? (r.channel === null ? "CURSOR (A and B)" : `REF ${r.name}${refArrow(r.edge)} (A and B)`) : "REF", x0 + 5 * g.k, 6 * g.k);
     }
     ctx.strokeStyle = token("line");
     ctx.lineWidth = 1;
@@ -259,7 +260,12 @@ export function CompareWave(p: Props) {
             if (i >= 0 && i < n) p.onSelect(indices[i]);
           }
         }}
-        onPointerLeave={() => hover(null)} />
+        onPointerLeave={() => hover(null)}
+        onDoubleClick={(e) => {
+          const { r, g } = geo();
+          const xx = e.clientX - r.left;
+          if (xx >= g.gutter && xx <= g.gutter + g.plotW) p.onCursor(xToT(e.clientX));
+        }} />
       {p.busy && <div className="viewport-loading" aria-hidden="true" />}
       {p.busy && <div className="viewport-note" data-test="compare-busy"><span className="spinner small" aria-hidden="true" /> Comparing A and B…</div>}
     </div>

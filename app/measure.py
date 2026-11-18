@@ -4,6 +4,9 @@ Reference
   manual -- the N-th `ref_edge` on `ref_channel`, at or after `search_from_s`.
   auto   -- the earliest `ref_edge` on any included channel after `search_from_s`
             ("the first signal that changes").  Ties go to the lowest index.
+  cursor -- a time the user put on the waveform (`cursor_s`, seconds in the
+            capture), like a Logic 2 timing marker.  No channel is the
+            reference; every included channel is measured from it.
 
 Every other channel
   the first `target_edge` at or after t_ref (an edge in the same sample counts:
@@ -15,6 +18,7 @@ to ±1 sample.  That figure travels with every result.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
 
 from app.capture import Capture
@@ -35,6 +39,7 @@ class Settings:
     window_s: float | None = None
     glitch_s: float = 0.0
     excluded: list[int] = field(default_factory=list)
+    cursor_s: float | None = None                             # ref_mode "cursor": time in capture
 
     @classmethod
     def from_dict(cls, d: dict) -> "Settings":
@@ -57,16 +62,24 @@ class Settings:
             raise ValueError("glitch filter cannot be negative")
         if self.ref_mode == "manual" and self.ref_channel is None:
             raise ValueError("choose a reference channel")
+        if self.ref_mode == "cursor" and (self.cursor_s is None or not math.isfinite(self.cursor_s)):
+            raise ValueError("place the cursor (double-click the waveform) or type its time")
 
 
 @dataclass
 class Reference:
-    channel: int
+    channel: int | None         # None: the cursor (no channel)
     name: str
-    edge: str
+    edge: str                   # rising | falling | cursor
     time: float
     first_cross: float
     occurrence: int
+
+    def describe(self) -> str:
+        """For people: "D3 PWR_GOOD rising #1" / "Cursor"."""
+        if self.channel is None:
+            return self.name
+        return f"{self.name} {self.edge} #{self.occurrence}"
 
 
 @dataclass
@@ -101,6 +114,12 @@ class Result:
 def _reference(cap: Capture, s: Settings) -> tuple[Reference | None, list[str]]:
     start = cap.begin if s.search_from_s is None else s.search_from_s
     notes: list[str] = []
+    if s.ref_mode == "cursor":
+        t = float(s.cursor_s)
+        if not cap.begin <= t <= cap.end:
+            notes.append(f"The cursor ({t:.9g} s) is outside this capture ({cap.begin:.9g} … {cap.end:.9g} s).")
+            return None, notes
+        return Reference(None, C.measure.cursor_name, "cursor", t, t, 1), notes
     if s.ref_mode == "manual":
         ch = cap.channel(int(s.ref_channel))
         e = find_edge(ch, start, s.ref_edge, s.glitch_s, skip=int(s.occurrence) - 1)

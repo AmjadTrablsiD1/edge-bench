@@ -107,7 +107,8 @@ def write(results: list[Result], out: Path, unit: str = C.units.default_export_u
         for res in results:
             by = {r.index: r for r in res.channels}
             ref = res.reference
-            row = [Path(res.file).name, f"{ref.name} {ref.edge}" if ref else "none"]
+            row = [Path(res.file).name, (f"{ref.name} {ref.edge}" if ref.channel is not None
+                                         else f"{ref.name} at {ref.time:.9f} s") if ref else "none"]
             for i in order:
                 r = by.get(i)
                 row.append(_num(r.dt, sc, res.resolution_s) if r and r.status in ("ok", "reference") else None)
@@ -125,11 +126,12 @@ def write(results: list[Result], out: Path, unit: str = C.units.default_export_u
     rows = [
         ("Exported by", f"{C.app.name} {C.app.version}"),
         ("Exported at", _dt.datetime.now().isoformat(timespec="seconds")),
-        ("Reference mode", "first channel that changes" if s.ref_mode == "auto" else "manual"),
-        ("Reference channel", "auto" if s.ref_mode == "auto" else s.ref_channel),
-        ("Reference edge", s.ref_edge),
-        ("Reference occurrence", s.occurrence if s.ref_mode == "manual" else "first"),
-        ("Search from [s]", "capture start" if s.search_from_s is None else s.search_from_s),
+        ("Reference mode", {"auto": "first channel that changes", "cursor": "cursor (a time placed on the waveform)"}
+         .get(s.ref_mode, "manual")),
+        ("Reference channel", {"auto": "auto", "cursor": "none — each capture's cursor, below"}.get(s.ref_mode, s.ref_channel)),
+        ("Reference edge", "—" if s.ref_mode == "cursor" else s.ref_edge),
+        ("Reference occurrence", s.occurrence if s.ref_mode == "manual" else "—" if s.ref_mode == "cursor" else "first"),
+        ("Search from [s]", "—" if s.ref_mode == "cursor" else "capture start" if s.search_from_s is None else s.search_from_s),
         ("Target edge", s.target_edge),
         ("Rule", "first edge at or after the reference (same sample counts, Δt = 0)"),
         (f"Window [{unit}]", "none" if s.window_s is None else _num(s.window_s, sc)),
@@ -144,7 +146,7 @@ def write(results: list[Result], out: Path, unit: str = C.units.default_export_u
     for res in results:
         ref = res.reference
         st.append([Path(res.file).name,
-                   (f"{ref.name} {ref.edge} #{ref.occurrence} at {ref.time:.9f} s" if ref else "no reference edge")
+                   (f"{ref.describe()} at {ref.time:.9f} s" if ref else "no reference edge")
                    + (f" · ±{res.resolution_s / sc:.6g}" if res.resolution_s else " · resolution unknown")])
         for n in res.notes:
             st.append(["", n])
@@ -214,15 +216,18 @@ def write_comparison(cmp, out: Path, unit: str = C.units.default_export_unit) ->
     t, s = cmp.tolerance, cmp.settings
 
     def ref_text(ref):
-        return (f"{ref['name']} {ref['edge']} #{ref['occurrence']} at {ref['time']:.9f} s in capture"
-                if ref else "no reference edge")
+        if not ref:
+            return "no reference edge"
+        what = ref["name"] if ref["channel"] is None else f"{ref['name']} {ref['edge']} #{ref['occurrence']}"
+        return f"{what} at {ref['time']:.9f} s in capture"
 
     rows = [
         ("Exported by", f"{C.app.name} {C.app.version}"),
         ("Exported at", _dt.datetime.now().isoformat(timespec="seconds")),
         ("Baseline (A)", cmp.file_a), ("New (B)", cmp.file_b),
         ("Reference in A", ref_text(cmp.reference_a)), ("Reference in B", ref_text(cmp.reference_b)),
-        ("Reference rule", f"{'first channel to change' if s.ref_mode == 'auto' else f'channel {s.ref_channel}'}, "
+        ("Reference rule", "a cursor placed on each capture" if s.ref_mode == "cursor" else
+                           f"{'first channel to change' if s.ref_mode == 'auto' else f'channel {s.ref_channel}'}, "
                            f"{s.ref_edge} edge #{s.occurrence}"),
         ("Target edge", s.target_edge),
         ("Glitch filter", fmt_time(s.glitch_s) if s.glitch_s else "off"),

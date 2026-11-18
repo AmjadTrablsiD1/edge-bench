@@ -272,6 +272,7 @@ Rules for future versions:
 - **The page notices a dead server**: a heartbeat calls `/api/whoami` every `ui.heartbeat_ms`; after `ui.heartbeat_misses` refused connections in a row the page shows "Edge Bench has stopped". Any HTTP reply counts as alive, so a busy server never trips it, and it is off after Quit and during an update. Before this, a server ended by the memory guard left a page that looked as if files had stopped loading.
 - Retry is refused while a capture is loading; removing a loading capture cancels it at the reader's next progress step.
 
+- **Cursor reference** (`ref_mode: "cursor"`, 0.6.0): `Reference.channel` is `None` and `edge` is `"cursor"`; never assume a reference has a channel (use `Reference.describe()` / the UI's `refLabel()`). The cursor is per capture: the UI keeps `form.cursors[path]`, sends A's as `settings.cursor_s`, B's as `cursor_b_s` (Compare) and each capture's in `cursors` (Excel export, which skips a capture without one and names it). It is snapped to a whole sample when placed. Placing or dragging it never re-frames the view (`keepView`).
 - Compare rows are not unique by channel number once channels are matched by name (B's D0 can sit beside A's D0). The UI keys rows with `rowId()` (A's number, or -(B's number + 1)); never key them by `index` alone.
 
 - Compare: "time high" is only compared on channels with >= `duty_min_edges` edges. On a single transition it restates Δt, and before this rule a shifted edge was flagged twice, so raising the delay tolerance could never clear it.

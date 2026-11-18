@@ -29,7 +29,11 @@ capture, 16 channels at 100 MS/s, 5.86 million edges:
 
 - **Reference:** a chosen channel's N-th rising / falling / either edge after
   an optional start time, **or** the first edge on any channel ("first to
-  change").
+  change"), **or a cursor**: a time you put on the waveform, like a Logic 2
+  timing marker. Double-click the waveform to place it, drag its line to move
+  it, or type its time in *Reference → Cursor at*. Every channel is then
+  measured from that time. Each capture keeps its own cursor; it is rounded to
+  a whole sample, like every edge.
 - **Every other channel:** the first edge of the chosen kind *at or after*
   the reference. An edge in the same sample counts as Δt = 0.
 - **Window:** edges later than the window are reported as "outside", together
@@ -55,7 +59,9 @@ simulated devices).
 Use this, for example, to check a new firmware against the released one before
 it goes near hardware. Switch the header to **Compare A ↔ B**, then pick the
 **baseline (A)** and the **new capture (B)**. Both get the same measurement,
-and each is aligned on its own reference edge. Every channel is then marked:
+and each is aligned on its own reference edge (or its own cursor: *Cursor in
+A* and *Cursor in B*; double-clicking the compare view moves both by the same
+time after their references). Every channel is then marked:
 
 | Verdict | When |
 |---|---|
@@ -127,8 +133,8 @@ along with the Logic 2 it started.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 cd ui && npm install && npm run build && cd ..
-.venv/bin/python -m pytest -q          # core, API, compare, .sal reader, updater, fast indexing (319)
-npm install && npx playwright test     # real UI, both themes, axe, fold probe (40)
+.venv/bin/python -m pytest -q          # core, API, compare, .sal reader, updater, fast indexing (326)
+npm install && npx playwright test     # real UI, both themes, axe, fold probe (44)
 .venv/bin/python main.py               # run from the repo
 ```
 

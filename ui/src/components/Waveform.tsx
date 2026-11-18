@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { chartScale, drawSegments, token, useCanvas } from "../canvas";
 import { C } from "../constants";
-import { measuredText, niceStep, signedTime, timeText } from "../format";
+import { measuredText, niceStep, signedTime, timeText, refArrow } from "../format";
 import type { CaptureSummary, Result, Wave } from "../types";
 
 const W = C.waveform;
@@ -25,6 +25,8 @@ interface Props {
   onSelect: (index: number) => void;
   excluded: number[];
   windowS: number | null;
+  cursor: number | null;            // cursor reference: where it is (drawn even before a result)
+  onCursor: (t: number) => void;    // double-click places it, dragging its line moves it
   theme: string;
 }
 
@@ -48,7 +50,7 @@ export function Waveform(p: Props) {
   const [wave, setWave] = useState<Wave | null>(null);
   const [loading, setLoading] = useState(false);
   const overlay = useRef<HTMLCanvasElement>(null);
-  const drag = useRef<{ x: number; view: View; moved: boolean } | null>(null);
+  const drag = useRef<{ x: number; view: View; moved: boolean; cursor: boolean } | null>(null);
   const channels = p.capture.channels;
   const n = channels.length;
 
@@ -57,6 +59,7 @@ export function Waveform(p: Props) {
     const { t0, t1 } = p.view;
     const x = (t: number) => g.gutter + ((t - t0) / (t1 - t0)) * g.plotW;
     const ref0 = p.result?.reference?.time ?? null;
+    const cursorRef = p.result?.reference?.channel === null;
     const origin = ref0 ?? 0;
     const font = (px: number, mono = false) =>
       `${mono ? 500 : 500} ${px * g.k}px ${mono ? "'JetBrains Mono', monospace" : "Inter, sans-serif"}`;
@@ -188,6 +191,20 @@ export function Waveform(p: Props) {
       }
     }
 
+    // a cursor not measured from yet (being dragged, or outside the capture)
+    if (p.cursor !== null && !(cursorRef && ref0 === p.cursor)) {
+      const xc = x(p.cursor);
+      if (xc >= g.gutter - 1 && xc <= g.gutter + g.plotW + 1) {
+        ctx.strokeStyle = token("q-ref");
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 1.5 * g.k;
+        ctx.setLineDash([2 * g.k, 3 * g.k]);
+        ctx.beginPath(); ctx.moveTo(xc, g.top - 8 * g.k); ctx.lineTo(xc, g.axisY); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+    }
+
     // reference line on top of everything
     if (ref0 !== null) {
       const xr = x(ref0);
@@ -202,7 +219,7 @@ export function Waveform(p: Props) {
         ctx.textAlign = "left";
         ctx.textBaseline = "top";
         const r = p.result!.reference!;
-        ctx.fillText(`REF ${r.name} ${r.edge === "rising" ? "↑" : "↓"}`, xr + 5 * g.k, 6 * g.k);
+        ctx.fillText(r.channel === null ? "CURSOR · drag to move" : `REF ${r.name}${refArrow(r.edge)}`, xr + 5 * g.k, 6 * g.k);
       }
     }
 
@@ -210,7 +227,7 @@ export function Waveform(p: Props) {
     ctx.strokeStyle = token("line");
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(g.gutter + 0.5, 0); ctx.lineTo(g.gutter + 0.5, h); ctx.stroke();
-  }, [wave, p.result, p.view, p.selected, p.excluded, p.windowS, p.theme, n]);
+  }, [wave, p.result, p.view, p.selected, p.excluded, p.windowS, p.cursor, p.theme, n]);
 
   // fetch the decimated window whenever the view or width changes
   useEffect(() => {
@@ -288,16 +305,26 @@ export function Waveform(p: Props) {
     return () => c.removeEventListener("wheel", stop);
   }, []);
 
+  /** Is the pointer on the cursor line (within grab_px)? */
+  const onCursorLine = (clientX: number) => {
+    if (p.cursor === null) return false;
+    const r = overlay.current!.getBoundingClientRect();
+    const g = geometry(r.width, r.height, n);
+    const xc = g.gutter + ((p.cursor - p.view.t0) / (p.view.t1 - p.view.t0)) * g.plotW;
+    return Math.abs(clientX - r.left - xc) <= W.cursor_grab_px;
+  };
   const onDown = (e: React.PointerEvent) => {
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    drag.current = { x: e.clientX, view: p.view, moved: false };
+    drag.current = { x: e.clientX, view: p.view, moved: false, cursor: onCursorLine(e.clientX) };
   };
   const onMove = (e: React.PointerEvent) => {
     drawHover(e.clientX, e.clientY);
     const d = drag.current;
+    (e.target as HTMLElement).style.cursor = d?.cursor || (!d && onCursorLine(e.clientX)) ? "ew-resize" : "";
     if (!d) return;
     if (Math.abs(e.clientX - d.x) > 4) d.moved = true;
     if (!d.moved) return;
+    if (d.cursor) { p.onCursor(xToT(e.clientX)); return; }
     const r = overlay.current!.getBoundingClientRect();
     const g = geometry(r.width, r.height, n);
     const dt = ((e.clientX - d.x) / g.plotW) * (d.view.t1 - d.view.t0);
@@ -326,6 +353,12 @@ export function Waveform(p: Props) {
         onPointerMove={onMove}
         onPointerUp={onUp}
         onPointerLeave={() => drawHover(null)}
+        onDoubleClick={(e) => {
+          const r = overlay.current!.getBoundingClientRect();
+          const g = geometry(r.width, r.height, n);
+          const xx = e.clientX - r.left;
+          if (xx >= g.gutter && xx <= g.gutter + g.plotW && e.clientY - r.top <= g.axisY) p.onCursor(xToT(e.clientX));
+        }}
       />
       {loading && <div className="viewport-loading" aria-hidden="true" />}
     </div>

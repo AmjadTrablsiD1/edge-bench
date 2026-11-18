@@ -152,6 +152,89 @@ test("fast indexing: status, switch off and on, install when it is missing", asy
   await expect(page.locator("[data-test=fast-install]")).toHaveCount(0);
 });
 
+// Where time t sits on the waveform overlay (the same geometry as Waveform.tsx).
+async function xOf(page: Page, t: number) {
+  const ov = page.locator("[data-test=wave-overlay]");
+  const box = (await ov.boundingBox())!;
+  const vp = page.locator("[data-test=viewport]");
+  const t0 = Number(await vp.getAttribute("data-t0")), t1 = Number(await vp.getAttribute("data-t1"));
+  const k = Math.max(1, Math.min(2.2, box.width / 1150));
+  const gutter = constants.waveform.label_gutter_px * k, plotW = box.width - gutter - 18 * k;
+  return { x: box.x + gutter + ((t - t0) / (t1 - t0)) * plotW, y: box.y + box.height * 0.4, t0, t1, box };
+}
+
+const cursorSeconds = async (page: Page, which = "a") => {
+  const box = page.locator(`[data-test=cursor-${which}]`);
+  const unit = await box.locator("xpath=following-sibling::select").inputValue();
+  const scale = constants.units.time.find((u: { label: string }) => u.label === unit)!.scale;
+  return Number(await box.inputValue()) * scale;
+};
+
+test("cursor reference: double-click places it, drag moves it, typing sets it", async ({ page }, info) => {
+  await openCapture(page, POWER);
+  const vp = page.locator("[data-test=viewport]");
+  const before = [await vp.getAttribute("data-t0"), await vp.getAttribute("data-t1")];
+  const { box, t0, t1 } = await xOf(page, 0);
+  const k = Math.max(1, Math.min(2.2, box.width / 1150));
+  const gutter = constants.waveform.label_gutter_px * k, plotW = box.width - gutter - 18 * k;
+
+  // 1. double-click a third of the way in: the reference becomes that time
+  await page.mouse.dblclick(box.x + gutter + plotW / 3, box.y + box.height * 0.4);
+  await expect(page.locator("[data-test=ref-mode] button[aria-checked=true]")).toHaveText("Cursor");
+  await expect(page.locator("[data-test=ref-summary]")).toContainText("Reference Cursor at");
+  const placed = await cursorSeconds(page);
+  expect(Math.abs(placed - (t0 + (t1 - t0) / 3))).toBeLessThan((t1 - t0) / plotW * 2);    // where it was clicked
+  expect([await vp.getAttribute("data-t0"), await vp.getAttribute("data-t1")]).toEqual(before);   // no jump
+  // every Δt is the server's answer for that time
+  const ask = async (t: number) => (await (await page.request.post("/api/measure", { data: {
+    file_id: (await (await page.request.get("/api/files")).json()).files[0].id,
+    settings: { ref_mode: "cursor", cursor_s: t, target_edge: "any" } } })).json());
+  const want = await ask(placed);
+  const ok = want.channels.filter((c: { status: string }) => c.status === "ok");
+  expect(ok.length).toBeGreaterThan(0);
+  for (const c of ok) await expect(page.locator(`[data-test=dt-${c.index}]`)).not.toHaveText("—");
+  await expect(page.locator("[data-test=ref-edge]")).toHaveCount(0);           // no edge or occurrence to set
+  await page.screenshot({ path: `${SHOTS}/${info.project.name}-18-cursor.png` });
+  await axe(page);
+
+  // 2. drag the cursor line 120 px to the right: it moves, the view does not pan
+  const at = await xOf(page, placed);
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down();
+  await page.mouse.move(at.x + 60, at.y, { steps: 4 });
+  await page.mouse.move(at.x + 120, at.y, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(() => cursorSeconds(page)).toBeGreaterThan(placed + (t1 - t0) / plotW * 100);
+  expect([await vp.getAttribute("data-t0"), await vp.getAttribute("data-t1")]).toEqual(before);
+
+  // 3. type it: 0 = the capture start, every channel's first edge
+  await page.locator("[data-test=cursor-a]").fill("0");
+  await expect(page.locator("[data-test=ref-summary]")).toContainText("Reference Cursor at 0");
+  // and back to a channel: that setting was kept
+  await page.locator("[data-test=ref-mode] button", { hasText: "Channel" }).click();
+  await expect(page.locator("[data-test=ref-summary]")).not.toContainText("Cursor");
+  await page.locator("[data-test=cursor-a]").waitFor({ state: "detached" });
+});
+
+test("cursor reference in Compare: a cursor in each capture", async ({ page }) => {
+  await openPair(page);
+  await expect(page.locator("[data-test=compare-summary]")).toHaveText(/2\s*critical\s*3\s*changed\s*3\s*same/);
+  await page.locator("[data-test=ref-mode] button", { hasText: "Cursor" }).click();
+  await expect(page.locator("[data-test=compare-settings]")).toBeVisible();
+  await page.locator("[data-test=cursor-a]").fill("0");
+  await expect(page.locator("[data-test=cursor-b]")).toHaveAttribute("placeholder", "not placed");
+  await expect(page.locator("[data-test=compare-evidence]")).toContainText("no cursor of its own");
+  await page.locator("[data-test=cursor-b]").fill("0");
+  await expect(page.locator("[data-test=compare-evidence]")).not.toContainText("no cursor of its own");
+  await expect(page.locator("[data-test=compare-results]")).toBeVisible();
+  // double-click in the compare view: both cursors move by the same time after their references
+  const ov = page.locator("[data-test=compare-viewport] canvas.overlay");
+  const box = (await ov.boundingBox())!;
+  await page.mouse.dblclick(box.x + box.width * 0.6, box.y + box.height * 0.3);
+  await expect.poll(() => cursorSeconds(page, "a")).toBeGreaterThan(0);
+  expect(await cursorSeconds(page, "b")).toBeCloseTo(await cursorSeconds(page, "a"), 9);   // both were at 0
+});
+
 test("empty state invites the first capture", async ({ page }, info) => {
   await page.goto("/");
   await expect(page.locator("[data-test=empty]")).toContainText("Open a Saleae capture");

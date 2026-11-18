@@ -44,13 +44,15 @@ export const api = {
     call<Wave>(`waveform?file_id=${file_id}&t0=${t0}&t1=${t1}&px=${Math.round(px)}`, { signal }),
   dialog: (kind: "files" | "folder" | "save" | "exe" | "zip", initial?: string, name?: string) =>
     post<{ paths: string[] }>("dialog", { kind, initial, name }),
-  export: (file_ids: number[], settings: Settings, unit: string, path: string) =>
-    post<{ path: string; captures: number; skipped: string[] }>("export", { file_ids, settings, unit, path }),
+  // cursors: each capture's own cursor (seconds), for the cursor reference
+  export: (file_ids: number[], settings: Settings, unit: string, path: string, cursors: Record<number, number> = {}) =>
+    post<{ path: string; captures: number; skipped: string[] }>("export", { file_ids, settings, unit, path, cursors }),
   reveal: (path: string) => post<{ ok: boolean }>("reveal", { path }),
   setLogic2: (path: string | null) => post<AppStatus["logic2"]>("settings/logic2", { path }),
   // activity=false: the measured edges only (instant); true adds edge counts, time high, shortest pulse
-  compare: (a_id: number, b_id: number, settings: Settings, tolerance: Tolerance, span_s: number | null, match: MatchBy, activity = true) =>
-    post<Comparison>("compare", { a_id, b_id, settings, tolerance, span_s, match, activity }),
+  compare: (a_id: number, b_id: number, settings: Settings, tolerance: Tolerance, span_s: number | null, match: MatchBy,
+            activity = true, cursor_b_s: number | null = null) =>
+    post<Comparison>("compare", { a_id, b_id, settings, tolerance, span_s, match, activity, cursor_b_s }),
   exportCompare: (a_id: number, b_id: number, settings: Settings, tolerance: Tolerance, span_s: number | null, match: MatchBy, unit: string, path: string) =>
     post<{ path: string; captures: number; skipped: string[] }>("export/compare", { a_id, b_id, settings, tolerance, span_s, match, unit, path }),
   quit: () => post<{ ok: boolean }>("quit", {}),

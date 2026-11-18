@@ -283,10 +283,13 @@ def pair_channels(cap_a: Capture, cap_b: Capture, match: str) -> tuple[list[tupl
     return pairs, notes
 
 
-def _settings_for_b(s: Settings, pairs: list[tuple[int | None, int | None]]) -> tuple[Settings, str | None]:
-    """A's settings, with channel numbers translated to B's (reference, exclusions)."""
+def _settings_for_b(s: Settings, pairs: list[tuple[int | None, int | None]],
+                    cursor_b_s: float | None = None) -> tuple[Settings, str | None]:
+    """A's settings, with channel numbers translated to B's (reference, exclusions) and B's own cursor."""
     a_to_b = {a: b for a, b in pairs if a is not None}
     sb = replace(s, excluded=[a_to_b[i] for i in s.excluded if a_to_b.get(i) is not None])
+    if s.ref_mode == "cursor" and cursor_b_s is not None:
+        sb = replace(sb, cursor_s=cursor_b_s)
     if s.ref_mode != "manual" or s.ref_channel is None:
         return sb, None
     b_ref = a_to_b.get(int(s.ref_channel))
@@ -296,13 +299,20 @@ def _settings_for_b(s: Settings, pairs: list[tuple[int | None, int | None]]) -> 
 
 
 def compare(cap_a: Capture, cap_b: Capture, s: Settings, tol: Tolerance | None = None,
-            span_s: float | None = None, match: str = K.default_match, activity: bool = True) -> Comparison:
+            span_s: float | None = None, match: str = K.default_match, activity: bool = True,
+            cursor_b_s: float | None = None) -> Comparison:
     """`activity=False` compares the measured edges only -- instant on any capture.
     The UI shows that first when the full answer takes a while (the first
-    comparison of a very large binary export reads it through once)."""
+    comparison of a very large binary export reads it through once).
+
+    Cursor reference: A is measured from `s.cursor_s`, B from `cursor_b_s`
+    (each capture has its own timeline); without one, B uses A's time.
+    """
     tol = tol or Tolerance()
     pairs, notes = pair_channels(cap_a, cap_b, match)
-    sb, ref_problem = _settings_for_b(s, pairs)
+    sb, ref_problem = _settings_for_b(s, pairs, cursor_b_s)
+    if s.ref_mode == "cursor" and cursor_b_s is None:
+        notes.append(f"Capture B has no cursor of its own; A's cursor time ({fmt_time(s.cursor_s)}) is used in B too.")
     ra = run(cap_a, s)
     if ref_problem:
         # B has no channel matching A's reference: B gets a result with no reference.

@@ -208,6 +208,8 @@ dl.evidence dd.path { font-size: 10px; }
 .pill-miss { color: var(--coral); background: color-mix(in srgb, var(--coral) 13%, transparent); }
 .pill-muted { color: var(--muted); border-color: var(--line); }
 .pill-busy { color: var(--gold); background: color-mix(in srgb, var(--gold) 13%, transparent); }
+/* a selected row is tinted: give its pills an opaque base, or the light theme drops below 4.5:1 */
+.results tr.selected .pill { background: color-mix(in srgb, currentColor 10%, var(--surface)); }
 
 .toasts { position: fixed; right: 14px; bottom: 38px; display: flex; flex-direction: column; gap: 8px; z-index: 50; max-width: 460px; }
 .toast {

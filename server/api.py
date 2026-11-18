@@ -274,6 +274,7 @@ class CompareReq(BaseModel):
     span_s: float | None = None
     match: str = C.compare.default_match
     activity: bool = True
+    cursor_b_s: float | None = None             # cursor reference: B's own cursor
 
 
 def _compare(req: CompareReq) -> compare.Comparison:
@@ -290,7 +291,7 @@ def _compare(req: CompareReq) -> compare.Comparison:
         if req.match not in C.compare.match_modes:
             raise ValueError(f"channel matching must be one of {C.compare.match_modes}")
         return compare.compare(a.capture, b.capture, _settings(req.settings), tol, req.span_s, req.match,
-                               req.activity)
+                               req.activity, req.cursor_b_s)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except KeyError as exc:
@@ -332,20 +333,29 @@ class ExportReq(BaseModel):
     settings: dict
     unit: str = C.units.default_export_unit
     path: str
+    cursors: dict[int, float] = {}              # cursor reference: each capture's own cursor
 
 
 @api.post("/api/export")
 def export(req: ExportReq):
-    s = _settings(req.settings)
+    cursor = req.settings.get("ref_mode") == "cursor"
+    s = None if cursor else _settings(req.settings)
     results, skipped = [], []
     for fid in req.file_ids:
         e = S.entries.get(fid)
         if e is None or e.status != "ready":
             skipped.append(e.path.name if e else str(fid))
             continue
+        if cursor:                                 # each capture from its own cursor; none placed: skipped
+            if fid not in req.cursors:
+                skipped.append(f"{e.path.name} (no cursor)")
+                continue
+            results.append(_run(e, _settings({**req.settings, "cursor_s": req.cursors[fid]})))
+            continue
         results.append(_run(e, s))
     if not results:
-        raise HTTPException(409, "None of the selected captures is loaded yet.")
+        raise HTTPException(409, "None of the selected captures has a cursor placed yet." if cursor
+                            else "None of the selected captures is loaded yet.")
     out = Path(req.path).expanduser()
     if out.suffix.lower() != ".xlsx":
         out = out.with_suffix(".xlsx")

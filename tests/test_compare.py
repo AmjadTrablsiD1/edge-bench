@@ -289,3 +289,28 @@ def test_quick_compare_looks_at_the_measured_edges_only(pair):
         assert f.a.edges is not None
         assert {r.metric for r in q.reasons} == {r.metric for r in f.reasons} - {"edges", "duty", "min_pulse"}
     assert quick.span_s == full.span_s
+
+
+def test_compare_with_a_cursor_in_each_capture(pair):
+    """A and B each measured from their own cursor; without B's, A's time is used and said."""
+    a, b = pair
+    edge_a = measure_run_ref(a)
+    edge_b = measure_run_ref(b)
+    by_edge = compare(a, b, Settings(ref_channel=0))
+    by_cursor = compare(a, b, Settings(ref_mode="cursor", cursor_s=edge_a), cursor_b_s=edge_b)
+    assert by_cursor.reference_a["channel"] is None and by_cursor.reference_a["time"] == edge_a
+    assert by_cursor.reference_b["time"] == edge_b
+    # cursors on the reference edges: every other channel compares exactly as with the edge
+    for e, c in zip(by_edge.rows, by_cursor.rows):
+        if e.index == 0:
+            continue
+        assert (c.a.dt, c.b.dt, c.verdict) == (e.a.dt, e.b.dt, e.verdict), e.index
+    same_time = compare(a, b, Settings(ref_mode="cursor", cursor_s=edge_a))
+    assert same_time.reference_b["time"] == edge_a
+    assert any("no cursor of its own" in n for n in same_time.notes)
+    assert not any("no cursor of its own" in n for n in by_cursor.notes)
+
+
+def measure_run_ref(cap):
+    from app.measure import run
+    return run(cap, Settings(ref_channel=0)).reference.time

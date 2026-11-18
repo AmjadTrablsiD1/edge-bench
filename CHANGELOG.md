@@ -4,6 +4,11 @@ What changed in each version, newest first. The app shows these sections as
 "What's new" before an update. Each heading is `## <version> — <date>`, and the
 bullets underneath are written for the people who use Edge Bench.
 
+## 0.6.0 — 2026-11-18
+- A cursor as the reference: double-click the waveform (or type a time) and every channel is measured from there, like a Logic 2 timing marker. Drag the cursor's line to move it; each capture keeps its own.
+- Compare can align A and B on a cursor in each; Excel says which cursor every capture was measured from.
+- Fixed: in the light theme, status pills on a selected row were slightly too faint to read.
+
 ## 0.5.0 — 2026-11-12
 - Fast indexing (App tab): the first open of a large .sal is about twice as fast again (3.3 billion edges: 21 s → 10 s). It is optional: the offline package installs it, a switch turns it off, and Edge Bench uses its own code whenever it is missing or does not pass its self-test.
 - The results are identical with it on or off.

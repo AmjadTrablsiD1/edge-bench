@@ -2,7 +2,7 @@
 // and the app's own settings (updates, Logic 2 path, cache).
 import { useEffect, useState } from "react";
 import { C } from "../constants";
-import { bytes, timeText } from "../format";
+import { bytes, timeText, refLabel } from "../format";
 import type { FormErrors, Form, ToleranceErrors } from "../settings";
 import type { AppStatus, CaptureSummary, Comparison, EdgeKind, Result, UpdateInfo, UpdatePackage } from "../types";
 import { Field, Icon, Segmented, TimeInput } from "./ui";
@@ -22,6 +22,7 @@ interface Props {
   onBrowseLogic2: () => void;
   onResetLogic2: () => void;
   onClearCache: () => void;
+  cursorFields: { path: string; label: string; hint: string; error?: string }[];   // cursor reference: one per capture
   onSetFast: (on: boolean) => void;
   onInstallFast: () => void;
   fastBusy: boolean;
@@ -66,9 +67,20 @@ export function Inspector(p: Props) {
               <Field label="Reference is">
                 <Segmented label="Reference mode" value={f.refMode} testId="ref-mode"
                   onChange={(v) => set({ refMode: v })}
-                  options={[{ value: "manual", label: "A chosen channel" },
-                            { value: "auto", label: "First to change", title: "The earliest edge on any included channel" }]} />
+                  options={[{ value: "manual", label: "Channel", title: "An edge on a channel you choose" },
+                            { value: "auto", label: "First to change", title: "The earliest edge on any included channel" },
+                            { value: "cursor", label: "Cursor", title: "A time you place on the waveform, like a Logic 2 marker" }]} />
               </Field>
+              {f.refMode === "cursor" && p.cursorFields.map((c) => (
+                <Field key={c.label} label={c.label} htmlFor={`cur-${c.label}`} error={c.error} hint={c.hint}>
+                  <TimeInput id={`cur-${c.label}`} value={f.cursors[c.path] ?? { text: "", unit: "ms" }} placeholder="not placed"
+                    testId={`cursor-${c.label === "Cursor in B" ? "b" : "a"}`}
+                    onChange={(q) => set({ cursors: { ...f.cursors, [c.path]: q } })} />
+                </Field>
+              ))}
+              {f.refMode === "cursor" && p.cursorFields.length === 0 && (
+                <p className="body-text">Open a capture, then double-click its waveform where the measurement starts.</p>
+              )}
               {f.refMode === "manual" && (
                 <Field label="Channel" htmlFor="ref-ch" error={p.errors.refChannel}>
                   <select id="ref-ch" value={f.refChannel ?? ""} data-test="ref-channel"
@@ -78,10 +90,13 @@ export function Inspector(p: Props) {
                   </select>
                 </Field>
               )}
+              {f.refMode !== "cursor" && (
               <Field label="Edge">
                 <Segmented label="Reference edge" value={f.refEdge} options={EDGE_OPTS(true)} testId="ref-edge"
                   onChange={(v) => set({ refEdge: v })} />
               </Field>
+              )}
+              {f.refMode !== "cursor" && (
               <div className="field-row">
                 {f.refMode === "manual" && (
                   <Field label="Occurrence" htmlFor="occ" error={p.errors.occurrence} hint="1 = first edge">
@@ -93,6 +108,7 @@ export function Inspector(p: Props) {
                   <TimeInput id="from" value={f.searchFrom} onChange={(q) => set({ searchFrom: q })} placeholder="start" />
                 </Field>
               </div>
+              )}
             </section>
 
             <section className="well">
@@ -323,7 +339,8 @@ function Coverage(p: { result: Result | null; capture: CaptureSummary | null; fo
       <section className="well">
         <h3 className="well-cap">Evaluated</h3>
         <ul className="cover-list ok">
-          <li>One reference edge: {r?.reference ? `${r.reference.name} ${r.reference.edge} #${r.reference.occurrence}` : "none found"}.</li>
+          <li>{r?.reference?.channel === null ? `Reference: the cursor at ${timeText(r.reference.time)} in the capture (no channel)`
+            : `One reference edge: ${r?.reference ? refLabel(r.reference) : "none found"}`}.</li>
           <li>On every other included channel, the first {p.form.targetEdge === "any" ? "edge (either direction)" : `${p.form.targetEdge} edge`} at or after it. An edge in the same sample counts as Δt = 0.</li>
           <li>Window: {r?.settings.window_s ? `edges later than ${timeText(r.settings.window_s)} are reported as outside` : "none"}.</li>
           <li>Glitch filter: {r?.settings.glitch_s ? `pulses shorter than ${timeText(r.settings.glitch_s)} ignored; the edge reported is where the level settled (as Logic 2's own filter shows it)` : "off — every edge counts"}.</li>

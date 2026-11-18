@@ -2,7 +2,7 @@
 // selected channel beside it -- every Δt can be traced to the two edges it
 // was measured between.
 import { useMemo, useState } from "react";
-import { measured, measuredText, timeText } from "../format";
+import { measured, measuredText, timeText, refLabel } from "../format";
 import type { ChannelResult, Result } from "../types";
 import { Num, Pill } from "./ui";
 
@@ -88,7 +88,7 @@ function Evidence({ r, c }: { r: Result; c: ChannelResult }) {
       </div>
       <dl className="evidence">
         <dt>Reference</dt>
-        <dd>{ref ? `${ref.name} ${ref.edge} #${ref.occurrence} at ${measuredText(ref.time, res)}` : "none"}</dd>
+        <dd>{ref ? `${refLabel(ref)} at ${measuredText(ref.time, res)}` : "none"}</dd>
         <dt>This edge</dt>
         <dd>{c.edge ? `${c.edge} at ${measuredText(c.time, res)}` : c.status === "out_of_window" ? `next edge at +${measuredText(c.next_dt, res)}` : "none"}</dd>
         {c.bounce !== null && c.bounce > 0 && (<><dt>Bounce</dt><dd>settled {timeText(c.bounce)} after first crossing</dd></>)}
@@ -102,7 +102,7 @@ function Evidence({ r, c }: { r: Result; c: ChannelResult }) {
 
 function explain(c: ChannelResult, r: Result): string {
   switch (c.status) {
-    case "ok": return `This channel changed ${measuredText(c.dt, r.resolution_s)} after the reference edge. Both edges are sampled, so the true delay is within ±1 sample${r.resolution_s ? ` (${timeText(r.resolution_s)})` : ""}.`;
+    case "ok": return `This channel changed ${measuredText(c.dt, r.resolution_s)} after the ${r.reference?.channel === null ? "cursor" : "reference edge"}. Both edges are sampled, so the true delay is within ±1 sample${r.resolution_s ? ` (${timeText(r.resolution_s)})` : ""}.`;
     case "reference": return "This is the reference channel; every Δt is measured from its edge.";
     case "no_edge": return "No matching edge between the reference and the end of the capture. Try 'Either' edge, a later occurrence, or check the probe.";
     case "out_of_window": return `The next edge is ${timeText(c.next_dt)} after the reference, beyond the window. Widen the window if that edge is the one you want.`;

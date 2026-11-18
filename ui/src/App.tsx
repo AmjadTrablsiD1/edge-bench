@@ -10,8 +10,8 @@ import { Results } from "./components/Results";
 import { Waveform, type View } from "./components/Waveform";
 import { Icon, Segmented } from "./components/ui";
 import { C } from "./constants";
-import { bytes, measuredText, rate, timeText } from "./format";
-import { loadForm, saveForm, toSettings, toTolerance, type Form } from "./settings";
+import { bytes, measuredText, rate, refArrow, timeText } from "./format";
+import { cursorQuantity, cursorSeconds, loadForm, saveForm, toSettings, toTolerance, type Form } from "./settings";
 import { applyTheme, initialTheme, THEMES, type ThemeName } from "./theme";
 import type { AppStatus, Comparison, FileEntry, Result, UpdateInfo, UpdatePackage } from "./types";
 
@@ -205,10 +205,26 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setupCapture]);
 
-  const { settings, errors } = useMemo(() => toSettings(form), [form]);
+  // cursor reference: every capture has its own cursor (Compare: A's for the settings, B's beside them)
+  const cursorPath = (comparing ? fileA?.path : file?.path) ?? null;
+  const { settings, errors } = useMemo(() => toSettings(form, cursorPath), [form, cursorPath]);
+  const cursorB = form.refMode === "cursor" ? cursorSeconds(form, fileB?.path) : null;
+  const cursorBError = Number.isNaN(cursorB) ? "Not a number." : undefined;
+  const keepView = useRef(false);            // a cursor was just placed: do not re-frame under the mouse
+  const setCursors = (times: [string, number, number | null][], shown: View) => {
+    const cursors = { ...form.cursors };
+    for (const [path, t, res] of times) {
+      // on a sample, like every edge; without a sample rate, to a tenth of a pixel or so
+      const step = res ?? Math.pow(10, Math.floor(Math.log10(Math.max((shown.t1 - shown.t0) / 10000, 1e-15))));
+      const snapped = Math.round(t / step) * step;
+      cursors[path] = cursorQuantity(snapped, form.cursors[path]?.unit ?? "ms");
+    }
+    keepView.current = true;
+    setForm({ ...form, refMode: "cursor", cursors });
+  };
   const settingsKey = JSON.stringify(settings);
   const { tolerance, span_s, errors: tolErrors } = useMemo(() => toTolerance(form), [form]);
-  const cmpKey = JSON.stringify([aId, bId, settings, tolerance, span_s, form.matchBy, !!capA, !!capB]);
+  const cmpKey = JSON.stringify([aId, bId, settings, tolerance, span_s, form.matchBy, !!capA, !!capB, cursorB]);
 
   useEffect(() => {
     const id = ++compareReq.current;
@@ -223,10 +239,11 @@ export default function App() {
     let full = false, show = 0;
     const t = window.setTimeout(() => {
       setCmpError(null);
-      api.compare(aId, bId, settings, tolerance, span_s, form.matchBy, false)
+      const cb = cursorB !== null && !Number.isNaN(cursorB) ? cursorB : null;
+      api.compare(aId, bId, settings, tolerance, span_s, form.matchBy, false, cb)
         .then((c) => { show = window.setTimeout(() => { if (id === compareReq.current && !full) setCmp(c); }, C.compare.quick_show_ms); })
         .catch(() => {});
-      api.compare(aId, bId, settings, tolerance, span_s, form.matchBy)
+      api.compare(aId, bId, settings, tolerance, span_s, form.matchBy, true, cb)
         .then((c) => { full = true; if (id === compareReq.current) { setCmp(c); setCmpError(null); } })
         .catch((e) => { full = true; if (id === compareReq.current) { setCmp(null); setCmpError(e.message); } });
     }, 150);
@@ -252,8 +269,11 @@ export default function App() {
   }, [capture, file?.id, settingsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // reset the view when the measured event moves (not on every redraw)
-  const focusKey = result ? `${file?.id}|${result.reference?.time}|${result.channels.map((c) => c.time).join(",")}` : `${file?.id}`;
+  // a cursor reference moves under the mouse: the view stays where it is
+  const focusKey = form.refMode === "cursor" ? `${file?.id}|cursor`
+    : result ? `${file?.id}|${result.reference?.time}|${result.channels.map((c) => c.time).join(",")}` : `${file?.id}`;
   useEffect(() => {
+    if (keepView.current) { keepView.current = false; return; }
     if (capture) setView(focusView(result, capture.begin, capture.end));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusKey, !!capture]);
@@ -300,9 +320,16 @@ export default function App() {
     try {
       const { paths } = await api.dialog("save", dirname(first.path), suggested);
       if (!paths.length) return;
-      const r = await api.export(ids, settings, form.exportUnit, paths[0]);
+      const cursors: Record<number, number> = {};
+      if (form.refMode === "cursor") {
+        for (const id of ids) {
+          const t = cursorSeconds(form, files.find((f) => f.id === id)?.path);
+          if (t !== null && !Number.isNaN(t)) cursors[id] = t;
+        }
+      }
+      const r = await api.export(ids, settings, form.exportUnit, paths[0], cursors);
       toast("ok", `Saved ${basename(r.path)} · ${r.captures} capture${r.captures > 1 ? "s" : ""}` +
-        (r.skipped.length ? ` · skipped ${r.skipped.length} not loaded` : ""),
+        (r.skipped.length ? ` · skipped: ${r.skipped.join(", ")}` : ""),
         { label: "Show in folder", run: () => { api.reveal(r.path).catch(fail); } });
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
@@ -449,7 +476,10 @@ export default function App() {
             </div>
             {fileA && fileB && capA && capB ? (
               <CompareWave aId={fileA.id} bId={fileB.id} capA={capA} capB={capB} cmp={cmp} busy={!cmp && !cmpError} view={cview} setView={setCview}
-                selected={selectedCh} onSelect={setSelectedCh} theme={theme} />
+                selected={selectedCh} onSelect={setSelectedCh} theme={theme}
+                onCursor={(t) => setCursors([
+                  [fileA.path, (cmp?.reference_a?.time ?? capA.begin) + t, capA.resolution_s],
+                  [fileB.path, (cmp?.reference_b?.time ?? capB.begin) + t, capB.resolution_s]], cview)} />
             ) : (
               <div className="viewport empty-state" data-test="compare-empty">
                 <div className="state-card">
@@ -470,7 +500,9 @@ export default function App() {
           <>
           <div className="toolbar">
             <span className="toolbar-title" data-test="ref-summary">{result?.reference
-              ? <>Reference <b className="ref-text">{result.reference.name} {result.reference.edge === "rising" ? "↑" : "↓"}</b> #{result.reference.occurrence} at {measuredText(result.reference.time, result.resolution_s)}</>
+              ? result.reference.channel === null
+                ? <>Reference <b className="ref-text">Cursor</b> at {measuredText(result.reference.time, result.resolution_s)}</>
+                : <>Reference <b className="ref-text">{result.reference.name}{refArrow(result.reference.edge)}</b> #{result.reference.occurrence} at {measuredText(result.reference.time, result.resolution_s)}</>
               : capture ? (measureError ?? (settings ? "Measuring…" : "Fix the highlighted settings")) : "Waveform"}</span>
             <div className="toolbar-spacer" />
             {capture && (
@@ -493,7 +525,9 @@ export default function App() {
           {capture && file ? (
             <Waveform fileId={file.id} capture={capture} result={result} view={view} setView={setView}
               selected={selectedCh} onSelect={setSelectedCh} excluded={form.excluded}
-              windowS={settings?.window_s ?? null} theme={theme} />
+              windowS={settings?.window_s ?? null} theme={theme}
+              cursor={form.refMode === "cursor" ? cursorSeconds(form, file.path) : null}
+              onCursor={(t) => setCursors([[file.path, t, capture.resolution_s]], view)} />
           ) : (
             <div className="viewport empty-state" data-test="empty">
               {file && (file.status === "loading" || file.status === "queued") ? (
@@ -528,7 +562,12 @@ export default function App() {
         )}
       </main>
 
-      <Inspector mode={mode} cmp={cmp} tolErrors={comparing && setupCapture ? tolErrors : {}} form={form} setForm={setForm} errors={setupCapture ? errors : {}} capture={setupCapture} result={result} status={status}
+      <Inspector mode={mode} cmp={cmp}
+        cursorFields={comparing
+          ? [fileA && { path: fileA.path, label: "Cursor in A", hint: "time in capture A", error: errors.cursor },
+             fileB && { path: fileB.path, label: "Cursor in B", hint: "empty = the same time as A", error: cursorBError }]
+              .filter((x): x is { path: string; label: string; hint: string; error: string | undefined } => !!x)
+          : file ? [{ path: file.path, label: "Cursor at", hint: "time in capture · double-click the waveform", error: errors.cursor }] : []} tolErrors={comparing && setupCapture ? tolErrors : {}} form={form} setForm={setForm} errors={setupCapture ? errors : {}} capture={setupCapture} result={result} status={status}
         onBrowseLogic2={async () => {
           try {
             const { paths } = await api.dialog("exe");
@@ -554,7 +593,7 @@ export default function App() {
           {comparing ? (cmp ? ` · compared in ${timeText(cmp.compute_s)}` : "") : result ? ` · measured in ${timeText(result.compute_s)}` : ""}
         </span>
         <span className="status-mid">Logic 2: {logic2Text(status)}</span>
-        <span className="keys"><kbd className="status-key">R</kbd> measurement <kbd className="status-key">F</kbd> whole <kbd className="status-key">+</kbd><kbd className="status-key">−</kbd> zoom <kbd className="status-key">↑↓</kbd> channel · scroll zoom · drag pan</span>
+        <span className="keys">double-click cursor · <kbd className="status-key">R</kbd> measurement <kbd className="status-key">F</kbd> whole <kbd className="status-key">+</kbd><kbd className="status-key">−</kbd> zoom <kbd className="status-key">↑↓</kbd> channel · scroll zoom · drag pan</span>
       </footer>
 
       <div className="toasts" aria-live="polite">

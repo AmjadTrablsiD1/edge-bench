@@ -114,3 +114,24 @@ def test_compare_match_by_name_over_http():
     assert c["match"] == "name" and c["summary"]["critical"] == 2 and c["summary"]["same"] == 3
     bad = client.post("/api/compare", json={**body, "match": "colour"})
     assert bad.status_code == 422 and "channel matching" in bad.json()["detail"]
+
+
+def test_cursor_reference_over_http(tmp_path):
+    ids = []
+    for name in ("power_up_sequence.csv", "power_up_new_fw.csv"):
+        f = client.post("/api/files", json={"paths": [str(FIX / name)]}).json()["added"][0]
+        ids.append(_wait_ready(f["id"])["id"])
+    cur = {"ref_mode": "cursor", "cursor_s": 0.0005}
+    r = client.post("/api/measure", json={"file_id": ids[0], "settings": cur}).json()
+    assert r["reference"]["channel"] is None and r["reference"]["edge"] == "cursor" and r["reference"]["time"] == 0.0005
+    bad = client.post("/api/measure", json={"file_id": ids[0], "settings": {"ref_mode": "cursor"}})
+    assert bad.status_code == 422 and "cursor" in bad.json()["detail"]
+    c = client.post("/api/compare", json={"a_id": ids[0], "b_id": ids[1], "settings": cur, "cursor_b_s": 0.0007}).json()
+    assert c["reference_a"]["time"] == 0.0005 and c["reference_b"]["time"] == 0.0007
+    # export: each capture from its own cursor, one without a cursor is skipped and named
+    out = tmp_path / "cur.xlsx"
+    e = client.post("/api/export", json={"file_ids": ids, "settings": {"ref_mode": "cursor"}, "path": str(out),
+                                         "cursors": {str(ids[0]): 0.0005}}).json()
+    assert e["captures"] == 1 and e["skipped"] == ["power_up_new_fw.csv (no cursor)"]
+    none = client.post("/api/export", json={"file_ids": ids, "settings": {"ref_mode": "cursor"}, "path": str(out)})
+    assert none.status_code == 409 and "cursor" in none.json()["detail"]

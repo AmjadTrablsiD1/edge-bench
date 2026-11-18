@@ -115,8 +115,10 @@
     ],
     "ref_modes": [
       "manual",
-      "auto"
+      "auto",
+      "cursor"
     ],
+    "cursor_name": "Cursor",
     "default_ref_mode": "manual",
     "default_ref_edge": "rising",
     "default_target_edge": "any",
@@ -133,6 +135,7 @@
     }
   },
   "waveform": {
+    "cursor_grab_px": 6,
     "max_exact_per_px": 2,
     "min_px": 50,
     "max_px": 8000,

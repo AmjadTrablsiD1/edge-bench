@@ -58,6 +58,8 @@ Big captures
   exported through Logic 2; the Coverage tab then says so.
 
 Status
+  0.6.0: a cursor as the reference: double-click the waveform, every channel
+         is measured from that time.
   0.5.0: optional fast indexing (App tab): large .sal files open about twice
          as fast again. The offline zip installs it; without it, or if it
          cannot load, Edge Bench uses its own code.

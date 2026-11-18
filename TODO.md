@@ -24,6 +24,7 @@
 - [x] 2026-11-11 **Fixes from the Windows PC** (0.3.1): unaligned v0 memory maps copied a whole channel per search (`binary.MappedTimes`), the page says when the app has stopped, two tests made portable
 - [x] 2026-11-11 **Windows, 0.3.1 (you): binary fast, .sal slow to open, Compare showed only the two signals.** Reproduced with a 60 M-edge capture: 6.3 s to open (90 % of it my index pass), 13 s per comparison because it walked every edge of both captures. 0.4.0: index built while unpacking, on several threads, with a leaner tokenizer (0.6 s; 1.2 billion edges 130 s → 12 s at 200 MB); per-stretch summaries in the index so a span costs nothing (16 ms; 9 ms on 1.2 billion edges), the same summary for large binary exports; Compare answers the measured edges first, says "Comparing…" and shows errors. 46 new pytest + 6 Playwright; 39 planted bugs, 38 caught after 6 new tests, 1 was a redundant line
 - [x] 2026-11-12 **Could the laptop's NVIDIA card speed it up? (you)** Measured: no better than the CPU can. A GPU could only take the index step; unzipping is one sequential stream. Built instead, as an option: the two reader loops compiled with numba (0.5.0), 4–6x faster per core and on all cores, so a first open is now within 20 % of the unzip alone (3.3 billion edges: 21 s → 9.7 s; unzip 8.2 s). Optional package, self-test at every start, numpy as the fallback, switch in the App tab. Every reader test runs with both engines; 17 planted bugs caught by the tests, 18 of 18 wrong loops refused by the on-PC self-test
+- [x] 2026-11-18 **Cursor as the reference (you)** (0.6.0): third reference mode; double-click places, drag moves, typed time; per-capture cursors, in Compare (A and B) and in the Excel export; snapped to a sample. 7 pytest + 4 Playwright. Found on the way: every status pill on a selected row in the light theme was at 4.1–4.45:1, now 5.0–5.5:1
 
 ## Doing
 - [ ] Windows run of 0.5.0: does *App → Fast indexing* say "On — compiled for this PC"? (numba's Windows build has not been run by me.)
@@ -31,6 +32,7 @@
 - [ ] First real update on Windows (you): install 0.3.0 by hand once; the next release then comes through the update folder. Windows-only parts not run yet: the installer's console window, waiting on the app's process, pythonw restart
 
 ## Next
+0. **Logic 2 timing markers as cursors**: a .sal stores them in meta.json (`timingMarkers`); offer them as the cursor. Needs a .sal with markers placed in Logic 2 to read the format from (the automation API cannot place them).
 0. **A real-hardware .sal in the corpus** (a long idle channel at 250–500 MS/s gives 4-byte runs, which the simulator never writes), and a Logic MSO file.
 1. **Repeated cycles with statistics.** Every reference edge is a cycle, with min / mean / max / σ per channel and a *Cycles* sheet. This is the most likely follow-up; `find_edge` already supports it.
 2. **Per-channel edge kind** (e.g. D3 rising, D5 falling) instead of one global target edge.

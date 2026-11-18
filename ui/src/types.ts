@@ -29,7 +29,7 @@ export interface FileEntry {
 }
 
 export interface Settings {
-  ref_mode: "manual" | "auto";
+  ref_mode: "manual" | "auto" | "cursor";
   ref_channel: number | null;
   ref_edge: EdgeKind;
   occurrence: number;
@@ -38,10 +38,12 @@ export interface Settings {
   window_s: number | null;
   glitch_s: number;
   excluded: number[];
+  cursor_s: number | null;      // ref_mode "cursor": time in capture
 }
 
 export interface Reference {
-  channel: number; name: string; edge: "rising" | "falling";
+  channel: number | null;       // null: the cursor
+  name: string; edge: "rising" | "falling" | "cursor";
   time: number; first_cross: number; occurrence: number;
 }
 
